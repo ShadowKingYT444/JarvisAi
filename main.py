@@ -6,12 +6,18 @@ from wakeword.listener import WakeWordListener
 from wakeword.stt import SpeechToText
 from agent_logic import agent_service
 from jarvis_ui import JarvisOverlay
+from zombie_overlay import ZombieOverlay
+from focus_sentinel import FocusSentinel
 
-async def run_jarvis_loop(overlay, loop):
+async def run_jarvis_loop(overlay, zombie_overlay, loop):
     """
     Main asynchronous loop processing wake word and commands.
     """
     print("--- JARVIS AGENT INITIALIZING ---")
+    
+    # Initialize Sentinel
+    sentinel = FocusSentinel(zombie_overlay)
+    loop.create_task(sentinel.start())
     
     # Initialize components in executor to avoid blocking startup
     try:
@@ -94,9 +100,10 @@ def main():
     
     # Create UI
     overlay = JarvisOverlay()
+    zombie_overlay = ZombieOverlay()
     
     # Schedule the main logic
-    loop.create_task(run_jarvis_loop(overlay, loop))
+    loop.create_task(run_jarvis_loop(overlay, zombie_overlay, loop))
     
     # Run the loop
     with loop:
