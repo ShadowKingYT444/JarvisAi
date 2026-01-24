@@ -194,6 +194,54 @@ Output ONLY the JSON array, no markdown code blocks, no other text."""
         print(f"🙈 Tabs to hide: {result['tabs_to_hide']}")
         print("=" * 60 + "\n")
 
+    def synthesize_page_content(self, title: str, url: str, content: str) -> str:
+        """
+        Synthesize valuable insights from a page the user has dwelt on.
+        Returns a concise bullet point string or None if nothing valuable found.
+        """
+        if not content or len(content) < 50:
+            return None
+            
+        # Truncate content if too long (approx 10k chars should be plenty for context)
+        content_snippet = content[:10000]
+        
+        prompt = f"""You are a "Ghost Writer" taking notes for a developer.
+The user has been reading this page for over 30 seconds, implying it contains valuable information, a solution, or a key insight.
+
+Page Title: {title}
+URL: {url}
+Content Snippet:
+{content_snippet}
+
+Task:
+Extract the SINGLE most important technical takeaway, solution, or code pattern from this content.
+Condense it into a concise bullet point note (max 1-2 sentences).
+If it's a solution to an error, state the error and the fix.
+If it's documentation, state the key concept.
+If the content is irrelevant/noise, return "NO_NOTE".
+
+Format:
+"Found [concept/solution] for [topic]: [brief explanation/snippet]"
+"""
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3, 
+                )
+            )
+            
+            result = response.text.strip()
+            if "NO_NOTE" in result:
+                return None
+            
+            return result
+        except Exception as e:
+            print(f"[FocusManager] Synthesis error: {e}")
+            return None
+
 
 # Singleton for easy import
 focus_manager = FocusManager() if os.getenv("GOOGLE_API_KEY") else None
