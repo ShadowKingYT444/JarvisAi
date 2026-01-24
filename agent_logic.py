@@ -23,7 +23,7 @@ nest_asyncio.apply()
 
 # --- Configuration ---
 API_KEY = os.getenv("GOOGLE_API_KEY") or "AIzaSyCZi6VSgl4TAKxjyKBT83v906UGOxgmxRQ"
-MODEL_NAME = "gemini-2.0-flash-exp"
+MODEL_NAME = "gemini-2.0-flash"
 
 # MCP Configuration
 MCP_COMMAND = "npx"

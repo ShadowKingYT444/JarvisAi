@@ -30,7 +30,7 @@ if not API_KEY:
 
 # Initialize Gemini Client
 client = genai.Client(api_key=API_KEY)
-MODEL_NAME = "gemini-2.0-flash-exp"
+MODEL_NAME = "gemini-2.0-flash"
 
 # MCP Configuration
 MCP_COMMAND = "npx"
