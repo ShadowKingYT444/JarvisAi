@@ -50,13 +50,16 @@ def main():
     ]
     
     try:
-        subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Capture stderr to see if Chrome complains
+        chrome_proc = subprocess.Popen(chrome_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        t_chrome_err = threading.Thread(target=stream_reader, args=(chrome_proc.stderr, "CHROME", stop_event))
+        t_chrome_err.start()
         log("Chrome launched.")
     except Exception as e:
         log(f"Failed to launch Chrome: {e}")
         return
 
-    time.sleep(3)
+    time.sleep(8) # Increased wait time
 
     log("Starting Jarvis Agent...")
     env = os.environ.copy()
@@ -69,15 +72,10 @@ def main():
         bufsize=1,
         env=env
     )
+    
+    # ... (threads start)
 
-    stop_event = threading.Event()
-    t_out = threading.Thread(target=stream_reader, args=(jarvis_proc.stdout, "JARVIS", stop_event))
-    t_out.start()
-    # Ignore stderr for cleaner log unless needed, but keep it for debug
-    t_err = threading.Thread(target=stream_reader, args=(jarvis_proc.stderr, "JARVIS_ERR", stop_event))
-    t_err.start()
-
-    time.sleep(5)
+    time.sleep(8) # Increased wait time for Jarvis
 
     log("Simulating User Browsing via Playwright...")
     sim_script = """
@@ -89,7 +87,8 @@ def run():
     try:
         with sync_playwright() as p:
             print("[Sim] Connecting to CDP...", flush=True)
-            browser = p.chromium.connect_over_cdp("http://localhost:9222")
+            # Use 127.0.0.1 explicitly
+            browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
             context = browser.contexts[0]
             if not context.pages:
                 page = context.new_page()

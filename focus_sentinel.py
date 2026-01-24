@@ -74,7 +74,7 @@ class FocusSentinel:
             try:
                 await self.monitor_step()
             except Exception as e:
-                # print(f"[FocusSentinel] Error: {e}")
+                print(f"[FocusSentinel] Error: {e}")
                 pass
             await asyncio.sleep(1.0)
 
@@ -89,7 +89,7 @@ class FocusSentinel:
         current_url = active_tab['url']
         now = time.time()
         
-        # print(f"[FocusSentinel] Active: {current_url[:30]}...")
+        print(f"[FocusSentinel] Active: {current_url[:50]}...")
 
         # --- GHOST WRITER TRACKING ---
         if current_url != self.current_url:

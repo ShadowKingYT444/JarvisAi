@@ -1,131 +1,114 @@
-import math
-from PyQt6.QtWidgets import QWidget, QLabel, QApplication, QGraphicsDropShadowEffect
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QPainter, QPen, QFont, QRadialGradient, QPainterPath
+import sys
+from PyQt6.QtWidgets import QWidget, QApplication
+from PyQt6.QtCore import Qt, QTimer, pyqtProperty, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QColor, QPainter, QPen, QBrush
 
 class JarvisOverlay(QWidget):
     def __init__(self):
         super().__init__()
+        self._border_opacity = 0.0
+        self._pulse_size = 0
         self.initUI()
-        self.phase = 0
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update)
-        self.timer.setInterval(16) # ~60 FPS
         
+        # Pulse Animation Timer
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_pulse)
+        self.pulse_direction = 1
+        self.base_width = 10
+
     def initUI(self):
-        # 1. Window Flags
+        # Frameless, Always on Top, Transparent for Mouse, Tool
         self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.FramelessWindowHint | 
+            Qt.WindowType.WindowStaysOnTopHint | 
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowTransparentForInput
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        # Allow clicks to pass through to windows below
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-        # 2. Geometry (Full Screen)
+        
+        # Screen geometry
         screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(0, 0, screen.width(), screen.height())
+        self.setGeometry(screen)
 
-        # Labels removed per user request for cleaner UI
-        # 3. Top Label "JARVIS" - REMOVED
-        # 4. Bottom Label "JARVIS" - REMOVED
-        # 5. Glow Effects for Text - REMOVED
-        
-        # Start hidden
-        self.hide()
-        
-    def _add_glow(self, widget):
-        effect = QGraphicsDropShadowEffect()
-        effect.setBlurRadius(25)
-        effect.setColor(QColor("#00E5FF"))
-        effect.setOffset(0, 0)
-        widget.setGraphicsEffect(effect)
+    @pyqtProperty(float)
+    def border_opacity(self):
+        return self._border_opacity
+
+    @border_opacity.setter
+    def border_opacity(self, value):
+        self._border_opacity = value
+        self.update()
+
+    def update_pulse(self):
+        # Animate the border width
+        self._pulse_size += self.pulse_direction * 0.5
+        if self._pulse_size > 10:
+            self.pulse_direction = -1
+        elif self._pulse_size < 0:
+            self.pulse_direction = 1
+        self.update()
 
     def paintEvent(self, event):
-        """Draws a dynamic dark blue sine wave border."""
+        if self._border_opacity <= 0:
+            return
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        rect = self.rect()
-        width = rect.width()
-        height = rect.height()
-        
-        # Wave Parameters
-        amplitude = 10     # Pixel height of wave
-        frequency = 0.05   # How tight the waves are
-        step = 20          # Pixel step for optimization (lower = smoother, higher = faster)
-        base_inset = 20    # Base distance from edge
-        
-        # Current Phase
-        self.phase += 0.2
-        if self.phase > math.pi * 2:
-            self.phase -= math.pi * 2
-            
-        path = QPainterPath()
-        
-        # --- 1. Top Edge (Left to Right) ---
-        # Start at top-left
-        path.moveTo(0, base_inset + math.sin(0 * frequency + self.phase) * amplitude)
-        
-        for x in range(0, width, step):
-            y_offset = math.sin(x * frequency + self.phase) * amplitude
-            path.lineTo(x, base_inset + y_offset)
-        path.lineTo(width, base_inset + math.sin(width * frequency + self.phase) * amplitude)
 
-        # --- 2. Right Edge (Top to Bottom) ---
-        for y in range(0, height, step):
-            x_offset = math.sin(y * frequency + self.phase) * amplitude
-            # Inset from right side
-            path.lineTo(width - base_inset + x_offset, y)
-        path.lineTo(width - base_inset + math.sin(height * frequency + self.phase) * amplitude, height)
-
-        # --- 3. Bottom Edge (Right to Left) ---
-        for x in range(width, 0, -step):
-            y_offset = math.sin(x * frequency + self.phase) * amplitude
-            # Inset from bottom
-            path.lineTo(x, height - base_inset + y_offset)
-        path.lineTo(0, height - base_inset + math.sin(0 * frequency + self.phase) * amplitude)
-
-        # --- 4. Left Edge (Bottom to Top) ---
-        for y in range(height, 0, -step):
-            x_offset = math.sin(y * frequency + self.phase) * amplitude
-            path.lineTo(base_inset + x_offset, y)
-        path.lineTo(base_inset + math.sin(0 * frequency + self.phase) * amplitude, 0)
+        # Draw Blue Border with Pulse
+        # Color: Cyan/Blue (0, 200, 255)
+        alpha = int(self._border_opacity * 255)
+        color = QColor(0, 200, 255, alpha)
         
-        path.closeSubpath()
-
-        # Styles
-        # "Dark blue and vibrant... like dark blue waves"
-        # Core Color: Deep Electric Blue
-        color_core = QColor("#2962FF") # Vibrant Deep Blue
-        color_glow = QColor("#00B0FF") # Lighter Blue/Cyan for glow
+        pen_width = self.base_width + self._pulse_size
+        pen = QPen(color, pen_width)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         
-        # Oscillate opacity for "breathing" life
-        pulse = (math.sin(self.phase * 0.5) + 1) / 2
-        alpha = int(180 + (75 * pulse))
-        color_core.setAlpha(alpha)
-
-        # 1. Draw Glow (Thick, transparent)
-        pen_glow = QPen(color_glow)
-        pen_glow.setWidth(15)
-        pen_glow.setColor(QColor(0, 229, 255, 60)) # Cyan glow, very transparent
-        pen_glow.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen_glow)
-        painter.drawPath(path)
-
-        # 2. Draw Core (Thinner, solid)
-        pen_core = QPen(color_core)
-        pen_core.setWidth(6)
-        pen_core.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen_core)
-        painter.drawPath(path)
+        # Draw rect slightly inside to account for pen width
+        rect = self.rect().adjusted(int(pen_width/2), int(pen_width/2), -int(pen_width/2), -int(pen_width/2))
+        painter.drawRect(rect)
+        
+        # Optional: Add a subtle glow (inner second rect)
+        glow_color = QColor(0, 100, 255, int(alpha * 0.5))
+        painter.setPen(QPen(glow_color, pen_width + 10))
+        painter.drawRect(rect)
 
     def wake_up(self):
+        """Show the overlay with animation."""
         self.show()
-        self.timer.start()
+        # Fade In
+        self.anim = QPropertyAnimation(self, b"border_opacity")
+        self.anim.setDuration(300) # Fast wake up
+        self.anim.setStartValue(self._border_opacity)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim.start()
         
+        # Start Pulse
+        self.timer.start(30)
+
     def sleep(self):
+        """Hide the overlay."""
+        # Fade Out
+        self.anim = QPropertyAnimation(self, b"border_opacity")
+        self.anim.setDuration(200)
+        self.anim.setStartValue(self._border_opacity)
+        self.anim.setEndValue(0.0)
+        self.anim.setEasingCurve(QEasingCurve.Type.InQuad)
+        self.anim.start()
+        self.anim.finished.connect(self.hide_and_stop)
+
+    def hide_and_stop(self):
         self.timer.stop()
         self.hide()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    overlay = JarvisOverlay()
+    overlay.wake_up()
+    # Simulate sleep after 3 seconds
+    QTimer.singleShot(3000, overlay.sleep)
+    sys.exit(app.exec())

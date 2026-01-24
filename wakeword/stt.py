@@ -1,43 +1,53 @@
 import speech_recognition as sr
-from elevenlabs.client import ElevenLabs
+from faster_whisper import WhisperModel
 import os
 import io
+import tempfile
 
 class SpeechToText:
     def __init__(self):
-        self.api_key = os.getenv("ELEVENLABS_API_KEY")
-        if not self.api_key:
-            raise ValueError("Missing ELEVENLABS_API_KEY in .env")
+        print("  -> Loading Faster Whisper model (base.en)...")
+        # Use 'auto' to use GPU if available, else CPU. 
+        # int8 quantization is fast on CPU.
+        try:
+            self.model = WhisperModel("base.en", device="auto", compute_type="int8")
+        except Exception as e:
+            print(f"Warning: Failed to load 'auto' device, falling back to CPU. Error: {e}")
+            self.model = WhisperModel("base.en", device="cpu", compute_type="int8")
             
-        self.client = ElevenLabs(api_key=self.api_key)
         self.recognizer = sr.Recognizer()
         
-        # Allow longer pauses in speech (2 seconds instead of 0.8)
-        self.recognizer.pause_threshold = 2.0
-        self.recognizer.non_speaking_duration = 1.0
+        # Optimize for speed - snappier response
+        self.recognizer.pause_threshold = 0.6  # Stop recording after 0.6s of silence
+        self.recognizer.non_speaking_duration = 0.3
+        self.recognizer.energy_threshold = 300 # Default is 300, can adjust if noisy
+        self.recognizer.dynamic_energy_threshold = True 
         
         with sr.Microphone() as source:
             self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+        print("  -> STT Model Loaded.")
 
     def listen_and_transcribe(self):
         try:
             with sr.Microphone() as source:
                 print("  -> Listening...")
-                audio = self.recognizer.listen(source, timeout=8, phrase_time_limit=20)
+                # phrase_time_limit prevents it from getting stuck listening forever
+                audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
             
-            print("  -> Sending to ElevenLabs...")
+            print("  -> Transcribing...")
+            # faster-whisper works best with file paths or binary streams
             audio_data = io.BytesIO(audio.get_wav_data())
-            audio_data.name = "audio.wav" 
-
-            transcription = self.client.speech_to_text.convert(
-                file=audio_data,
-                model_id="scribe_v1", 
-                tag_audio_events=False
-            )
             
+            segments, info = self.model.transcribe(audio_data, beam_size=5)
+            
+            text = "".join([segment.text for segment in segments]).strip()
+            
+            if not text:
+                return None
+
             return {
-                "text": transcription.text,
-                "language": transcription.language_code
+                "text": text,
+                "language": info.language
             }
 
         except sr.WaitTimeoutError:

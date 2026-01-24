@@ -11,6 +11,7 @@ pvporcupine>=4.0.0
 pvrecorder>=1.2.0
 PyAudio>=0.2.14
 SpeechRecognition>=3.10.0
+faster-whisper>=1.0.0
 
 # GUI & Screen Control
 PyQt6>=6.0.0
