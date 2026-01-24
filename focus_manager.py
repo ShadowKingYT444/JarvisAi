@@ -48,7 +48,7 @@ class FocusManager:
             raise ValueError("Missing GOOGLE_API_KEY in .env")
         
         self.client = genai.Client(api_key=api_key)
-        self.model = "gemini-2.5-flash"  # Latest flash model
+        self.model = "gemini-2.0-flash"  # Fastest model
     
     def evaluate_tabs(self, tabs: list[TabInfo], current_goal: str) -> FocusManagerResult:
         """

@@ -108,7 +108,7 @@ class JarvisAgent:
         if not api_key:
             raise ValueError("Missing GOOGLE_API_KEY in .env")
         self.gemini = genai.Client(api_key=api_key)
-        self.model = "gemini-2.5-flash"  # Latest flash model
+        self.model = "gemini-2.0-flash"  # Fastest model
         
         # State
         self.current_goal = "General productivity"
@@ -183,45 +183,21 @@ class JarvisAgent:
             return False
     
     def parse_intent(self, command: str) -> list:
-        """
-        Use Gemini to parse the user's intent from natural language.
-        Supports complex multi-action commands.
-        
-        Returns a LIST of action dicts, each with:
-        - action: "focus", "switch", "open", "close", "restore", "set_goal", "pause_monitor", "resume_monitor", "status", "unknown"
-        - target: specific tab/url/goal depending on action
-        - goal: if setting a new focus goal
-        """
-        prompt = f"""You are a voice command parser for a focus/productivity assistant.
+        """Parse voice command into actions. Returns list of action dicts."""
+        prompt = f"""Parse: "{command}"
 
-Parse this voice command and return a JSON ARRAY of actions. Complex commands may have MULTIPLE actions.
+Actions: focus, switch, open, close, restore, pause_monitor (break time), resume_monitor (back to work), status, scan
 
-Command: "{command}"
-Current Goal: "{self.current_goal}"
-
-Possible actions:
-1. "focus" - Close distracting tabs based on a goal. Example: "keep productivity apps", "focus on coding"
-2. "switch" - Switch to a specific tab. Example: "go to gmail", "switch to github"
-3. "open" - Open a new website. Example: "open google docs", "open gmail"
-4. "close" - Close specific tabs. Example: "close youtube", "close instagram", "remove gmail"
-5. "restore" - Restore previously closed tabs. Example: "restore tabs", "bring back my tabs"
-6. "set_goal" - Set a new focus goal. Example: "I'm working on React", "my goal is studying"
-7. "pause_monitor" - DISABLE focus mode. Example: "break time", "I'm done working", "relax mode"
-8. "resume_monitor" - RE-ENABLE focus mode. Example: "back to work", "work mode"
-9. "status" - Get current status. Example: "what's my goal", "status"
-10. "scan" - Just list/scan tabs. Example: "what tabs do I have", "list my tabs"
-
-IMPORTANT: A command can have MULTIPLE actions! Parse ALL of them.
+Return JSON array:
+[{{"action":"open","target":"gmail"}},{{"action":"close","target":"youtube"}}]
 
 Examples:
-- "open google docs" -> [{{"action": "open", "target": "google docs"}}]
-- "close gmail" -> [{{"action": "close", "target": "gmail"}}]
-- "open google docs and close gmail" -> [{{"action": "open", "target": "google docs"}}, {{"action": "close", "target": "gmail"}}]
-- "switch to github and close youtube" -> [{{"action": "switch", "target": "github"}}, {{"action": "close", "target": "youtube"}}]
-- "focus on coding and open github" -> [{{"action": "focus", "target": "coding", "goal": "coding"}}, {{"action": "open", "target": "github"}}]
-- "close all distractions and open google docs" -> [{{"action": "focus", "target": "productivity"}}, {{"action": "open", "target": "google docs"}}]
+"open docs and close youtube" -> [{{"action":"open","target":"google docs"}},{{"action":"close","target":"youtube"}}]
+"focus on coding" -> [{{"action":"focus","target":"coding"}}]
+"break time" -> [{{"action":"pause_monitor"}}]
+"go to github" -> [{{"action":"switch","target":"github"}}]
 
-Output ONLY the JSON array, no explanation."""
+JSON only:"""
 
         try:
             response = self.gemini.models.generate_content(
@@ -315,7 +291,7 @@ Output ONLY the JSON array, no explanation."""
         self.monitoring_enabled = True
         
         self.speak("Focus mode on.")
-        print(f"🎯 FOCUS MODE ACTIVE: {self.current_goal}")
+        print(f"🎯 FOCUS MODE: {self.current_goal}")
         
         # Get tabs
         tabs = self.browser.get_tabs()
@@ -355,8 +331,10 @@ Output ONLY the JSON array, no explanation."""
         result = self.browser.switch_to_tab_by_keyword(target)
         print(f"   {result}")
         
-        if "Switched to" not in result:
-            self.speak("Tab not found.")
+        if "Switched to" in result:
+            self.speak("Done.")
+        else:
+            self.speak("Not found.")
     
     def _handle_open(self, target: str):
         """Open a URL."""
@@ -389,7 +367,8 @@ Output ONLY the JSON array, no explanation."""
         
         success = self.browser.open_url(url, new_tab=True)
         if success:
-            print(f"   🌐 Opened: {url}")
+            self.speak("Opening.")
+            print(f"   🌐 {url}")
     
     def _handle_close(self, target: str):
         """Close tabs matching target."""

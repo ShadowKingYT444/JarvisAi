@@ -12,14 +12,18 @@ class SpeechToText:
         self.client = ElevenLabs(api_key=self.api_key)
         self.recognizer = sr.Recognizer()
         
+        # Allow longer pauses in speech (2 seconds instead of 0.8)
+        self.recognizer.pause_threshold = 2.0
+        self.recognizer.non_speaking_duration = 1.0
+        
         with sr.Microphone() as source:
             self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
 
     def listen_and_transcribe(self):
         try:
             with sr.Microphone() as source:
-                print("  -> Listening for command...")
-                audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=15)
+                print("  -> Listening...")
+                audio = self.recognizer.listen(source, timeout=8, phrase_time_limit=20)
             
             print("  -> Sending to ElevenLabs...")
             audio_data = io.BytesIO(audio.get_wav_data())
