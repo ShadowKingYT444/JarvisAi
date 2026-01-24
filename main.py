@@ -4,7 +4,7 @@ import qasync
 from PyQt6.QtWidgets import QApplication
 from wakeword.listener import WakeWordListener
 from wakeword.stt import SpeechToText
-from agent import BrowserAgent
+from agent_logic import agent_service
 from jarvis_ui import JarvisOverlay
 
 async def run_jarvis_loop(overlay, loop):
@@ -22,9 +22,8 @@ async def run_jarvis_loop(overlay, loop):
         return
 
     # Initialize Agent
-    agent = BrowserAgent()
     try:
-        await agent.start()
+        await agent_service.initialize()
     except Exception as e:
         print(f"Agent Startup Error: {e}")
         if 'listener' in locals():
@@ -56,6 +55,9 @@ async def run_jarvis_loop(overlay, loop):
                 
                 # 4. Handle Command
                 if result and result.get('text'):
+                    # IMMEDIATE UI HIDE
+                    overlay.sleep()
+                    
                     command = result['text']
                     print(f"Command: {command}")
                     
@@ -64,13 +66,11 @@ async def run_jarvis_loop(overlay, loop):
                         break
                     
                     # 5. Execute Agent Action
-                    # agent.run_loop is async, so we await it directly
-                    await agent.run_loop(command)
+                    # Visual Agent (agent_logic) handles the loop internally
+                    await agent_service.process_request(command)
                 else:
                     print("[-] Could not understand command.")
-                
-                # 6. DEACTIVATE UI
-                overlay.sleep()
+                    overlay.sleep()
                 
     except asyncio.CancelledError:
         print("Task cancelled.")
@@ -78,7 +78,7 @@ async def run_jarvis_loop(overlay, loop):
         print("Stopping...")
     finally:
         print("Cleaning up resources...")
-        await agent.stop()
+        await agent_service.cleanup()
         if 'listener' in locals():
             listener.cleanup()
         # Close the app
