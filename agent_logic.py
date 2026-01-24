@@ -298,15 +298,13 @@ Turn 3:
                     return response_text
 
                 # Dynamic Wait
-                wait_time = 1.0
+                wait_time = 0.5
                 for tc in tool_calls:
                     if tc.get("tool") == "open_url":
-                        wait_time = 3.0 # Longer wait for page load
+                        wait_time = 2.0 # Allow some time for browser launch/load
                     elif tc.get("tool") in ["type_text", "click_at"]:
-                         # If we just clicked/typed, maybe a shorter wait is ok, but safer to stick to 1s?
-                         # Let's try 1.5s for click to be safe, 0.5s for type
-                         if tc.get("tool") == "type_text": wait_time = max(wait_time, 0.5)
-                         else: wait_time = max(wait_time, 1.5)
+                         if tc.get("tool") == "type_text": wait_time = max(wait_time, 0.3)
+                         else: wait_time = max(wait_time, 0.7)
 
                 print(f"DEBUG: Waiting {wait_time}s for UI update...")
                 await asyncio.sleep(wait_time)

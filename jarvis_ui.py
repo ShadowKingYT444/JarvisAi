@@ -23,27 +23,10 @@ class JarvisOverlay(QWidget):
         screen = QApplication.primaryScreen().geometry()
         self.setGeometry(0, 0, screen.width(), screen.height())
 
-        # 3. Top Label "JARVIS"
-        self.label_top = QLabel("J A R V I S", self)
-        font = QFont("Segoe UI", 24, QFont.Weight.Bold)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 10.0)
-        self.label_top.setFont(font)
-        self.label_top.setStyleSheet("color: #00E5FF;") # Cyan/Teal
-        self.label_top.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label_top.resize(screen.width(), 60)
-        self.label_top.move(0, 30)
-
-        # 4. Bottom Label "JARVIS"
-        self.label_bottom = QLabel("J A R V I S", self)
-        self.label_bottom.setFont(font)
-        self.label_bottom.setStyleSheet("color: #00E5FF;")
-        self.label_bottom.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label_bottom.resize(screen.width(), 60)
-        self.label_bottom.move(0, screen.height() - 90)
-
-        # 5. Glow Effects for Text
-        self._add_glow(self.label_top)
-        self._add_glow(self.label_bottom)
+        # Labels removed per user request for cleaner UI
+        # 3. Top Label "JARVIS" - REMOVED
+        # 4. Bottom Label "JARVIS" - REMOVED
+        # 5. Glow Effects for Text - REMOVED
         
         # Start hidden
         self.hide()
