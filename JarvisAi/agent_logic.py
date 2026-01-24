@@ -18,9 +18,6 @@ from PIL import Image
 import PIL.ImageGrab
 import io
 
-# Tab Manager for smart tab switching
-from tab_manager import tab_manager
-
 # Apply nest_asyncio
 nest_asyncio.apply()
 
@@ -82,8 +79,6 @@ class AgentService:
     async def cleanup(self):
         if self.exit_stack:
             await self.exit_stack.aclose()
-        # Disconnect tab manager
-        await tab_manager.disconnect()
 
     # Duplicate get_system_instruction removed.
 
@@ -127,28 +122,6 @@ class AgentService:
             key = args.get("key", "")
             pyautogui.press(key)
             return f"Pressed key: {key}"
-
-        # Tab Manager Tools
-        elif tool_name == "scan_tabs":
-            tabs = await tab_manager.scan_tabs()
-            if not tabs:
-                return "No tabs found or not connected to Chrome. Make sure Chrome is running with --remote-debugging-port=9222"
-            result = "Open tabs:\n"
-            for tab in tabs:
-                result += f"  [{tab['id']}] {tab['title']} - {tab['url']}\n"
-            return result
-        
-        elif tool_name == "switch_tab":
-            identifier = args.get("identifier") or args.get("tab_id") or args.get("keyword", "")
-            return await tab_manager.switch_to_tab(identifier)
-        
-        elif tool_name == "close_tab":
-            identifier = args.get("identifier") or args.get("tab_id") or args.get("keyword", "")
-            return await tab_manager.close_tab(identifier)
-        
-        elif tool_name == "new_tab":
-            url = args.get("url", "about:blank")
-            return await tab_manager.new_tab(url)
 
         # MCP Tools
         if tool_name in self.tool_map:
@@ -219,19 +192,7 @@ You are running in a loop. After you execute an action (like opening a URL), you
 3. `type_text(text)`: Type text.
 4. `press_key(key)`: Press key (e.g. 'enter').
 5. `terminate()`: Call this when the user's request is FULLY satisfied.
-
-**Tab Management Tools** (for switching between existing Chrome tabs):
-6. `scan_tabs()`: List all open tabs with their ID, title, and URL.
-7. `switch_tab(identifier)`: Switch to a tab by ID (number) or keyword (matches title/URL). Example: switch_tab("gmail") or switch_tab(2)
-8. `close_tab(identifier)`: Close a tab by ID or keyword.
-9. `new_tab(url)`: Open a new tab with the given URL.
-
-**Tab Switching Strategy**:
-- When user asks to "switch to email/docs/etc", first call `scan_tabs()` to see what's open.
-- Then call `switch_tab()` with the best matching keyword or ID.
-- Example: User says "go to my email" → scan_tabs → find "Inbox - Gmail" → switch_tab("gmail")
-
-10. Playwright Tools (Fallback):
+6. Playwright Tools (Fallback):
 {mcp_tools_str}
 
 **Input Format**:

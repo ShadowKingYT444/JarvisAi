@@ -18,8 +18,5 @@ qasync>=0.28.0
 pyautogui>=0.9.50
 pillow>=10.0.0
 
-# Browser Automation (for Tab Manager)
-playwright>=1.40.0
-
 # Environment & Utils
 python-dotenv>=1.0.0

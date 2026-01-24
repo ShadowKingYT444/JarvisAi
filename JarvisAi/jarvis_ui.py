@@ -17,12 +17,11 @@ class JarvisOverlay(QWidget):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowTransparentForInput 
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        # Allow clicks to pass through to windows below
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         # 2. Geometry (Full Screen)
         screen = QApplication.primaryScreen().geometry()

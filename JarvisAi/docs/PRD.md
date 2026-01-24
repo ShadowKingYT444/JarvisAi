@@ -1,0 +1,3 @@
+Jarvis AI is a helpful AI agent that will help with the user's day to day tasks and manage their tabs for them.
+The fundamental architecture is simple and straightforward:  First, the agent will activate when the wakeword of Jarvis is detected, then elevenlabs will listen to the user's inputs, translate to text and then send the string via api key to the model of gemini 2.0 flash.
+Now that the backend model has received the input, along with a system prompt that tells it what to do and how to act, it will then make tool calls to multiple libraries
