@@ -122,52 +122,42 @@ class JarvisAgent:
         self.monitor_thread = None
         self.voice_thread = None
         
-        # Speech queue for sequential speech
-        self.speech_queue = []
+        # Speech control
+        self.speech_process = None
         self.speech_lock = threading.Lock()
-        self.speech_thread = None
-        self.speech_running = True
     
-    def _speech_worker(self):
-        """Background thread that processes speech queue one at a time."""
-        while self.speech_running:
-            text_to_speak = None
-            
-            with self.speech_lock:
-                if self.speech_queue:
-                    text_to_speak = self.speech_queue.pop(0)
-            
-            if text_to_speak:
-                try:
-                    # Use run() to wait for speech to complete before next
-                    subprocess.run(
-                        ["say", "-v", "Samantha", text_to_speak],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=30
-                    )
-                except:
-                    pass
-            else:
-                time.sleep(0.1)
+    def stop_speech(self):
+        """Stop any ongoing speech immediately."""
+        with self.speech_lock:
+            if self.speech_process and self.speech_process.poll() is None:
+                self.speech_process.terminate()
+                self.speech_process = None
     
     def speak(self, text: str):
-        """Queue text for speech (plays sequentially, never overlaps)."""
-        # Clean text for speech
+        """Speak text (interruptible, non-overlapping)."""
+        # Clean text
         text = text.replace("🎯", "").replace("🚫", "").replace("✅", "")
         text = text.replace("📑", "").replace("🔄", "").replace("⚠️", "")
         text = text.replace("⏳", "").replace("⏰", "").replace("👁️", "")
         
         with self.speech_lock:
-            # Clear queue if too many pending (avoid lag)
-            if len(self.speech_queue) > 2:
-                self.speech_queue = self.speech_queue[-1:]
-            self.speech_queue.append(text)
-        
-        # Start speech thread if not running
-        if self.speech_thread is None or not self.speech_thread.is_alive():
-            self.speech_thread = threading.Thread(target=self._speech_worker, daemon=True)
-            self.speech_thread.start()
+            # Stop any current speech
+            if self.speech_process and self.speech_process.poll() is None:
+                self.speech_process.terminate()
+            
+            # Start new speech
+            try:
+                self.speech_process = subprocess.Popen(
+                    ["say", "-v", "Samantha", "-r", "200", text],  # Faster rate
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                # Wait for it to finish (but can be interrupted)
+                self.speech_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.speech_process.terminate()
+            except:
+                pass
     
     def initialize(self):
         """Initialize all components."""
@@ -185,12 +175,7 @@ class JarvisAgent:
             print(f"  → Found {len(tabs)} browser tabs")
             
             print("✅ Jarvis Agent initialized successfully!")
-            
-            # Start speech thread
-            self.speech_thread = threading.Thread(target=self._speech_worker, daemon=True)
-            self.speech_thread.start()
-            
-            self.speak("Jarvis is ready. Say Jarvis followed by a command.")
+            self.speak("Ready.")
             return True
             
         except Exception as e:
@@ -265,22 +250,15 @@ Output ONLY the JSON array, no explanation."""
         """Execute a voice command (supports multiple actions)."""
         print(f"\n📢 Command: \"{command}\"")
         
-        # Parse intent - now returns a LIST of actions
+        # Parse intent - returns a LIST of actions
         intents = self.parse_intent(command)
+        print(f"   Actions: {len(intents)}")
         
-        print(f"   Parsed {len(intents)} action(s): {intents}")
-        
-        if len(intents) > 1:
-            self.speak(f"Executing {len(intents)} actions.")
-        
-        # Execute each action in sequence
-        for i, intent in enumerate(intents):
+        # Execute each action silently
+        for intent in intents:
             action = intent.get("action", "unknown")
             target = intent.get("target")
-            
-            if len(intents) > 1:
-                print(f"\n   [{i+1}/{len(intents)}] {action}: {target}")
-            
+            print(f"   → {action}: {target}")
             self._execute_single_action(action, target, intent)
     
     def _execute_single_action(self, action: str, target, intent: dict):
@@ -308,14 +286,14 @@ Output ONLY the JSON array, no explanation."""
             self.focus_mode_active = False
             self.monitoring_enabled = False
             self.warned_tabs.clear()
-            self.speak("Break time. Focus mode disabled. Browse freely.")
-            print("⏸️ Focus mode DISABLED - Browse freely")
+            self.speak("Break time.")
+            print("⏸️ Focus mode OFF")
             
         elif action == "resume_monitor":
             self.focus_mode_active = True
             self.monitoring_enabled = True
-            self.speak("Back to work. Focus mode re-activated.")
-            print("▶️ Focus mode RE-ACTIVATED")
+            self.speak("Back to work.")
+            print("▶️ Focus mode ON")
             
         elif action == "status":
             self._handle_status()
@@ -324,8 +302,7 @@ Output ONLY the JSON array, no explanation."""
             self._handle_scan()
             
         else:
-            self.speak(f"I didn't understand part of that command.")
-            print(f"❓ Unknown action: {action}")
+            print(f"❓ Unknown: {action}")
     
     def _handle_focus(self, goal_hint: str):
         """Handle focus command - evaluate and close distracting tabs."""
@@ -337,9 +314,8 @@ Output ONLY the JSON array, no explanation."""
         self.focus_mode_active = True
         self.monitoring_enabled = True
         
-        self.speak(f"Focus mode activated for {self.current_goal}. I will actively close any distractions.")
+        self.speak("Focus mode on.")
         print(f"🎯 FOCUS MODE ACTIVE: {self.current_goal}")
-        print(f"   ⚠️ Distracting tabs will be automatically closed!")
         
         # Get tabs
         tabs = self.browser.get_tabs()
@@ -355,7 +331,7 @@ Output ONLY the JSON array, no explanation."""
         tabs_to_close = [t for t in tabs if t["id"] in result["tabs_to_hide"]]
         
         if not tabs_to_close:
-            self.speak("All tabs look productive. No distractions found.")
+            self.speak("All clear.")
             return
         
         # Backup
@@ -368,26 +344,23 @@ Output ONLY the JSON array, no explanation."""
                 closed_count += 1
                 print(f"   🚫 Closed: {tab['title'][:40]}")
         
-        self.speak(f"Closed {closed_count} distracting tabs. You now have {len(result['tabs_to_keep'])} productive tabs.")
+        if closed_count > 0:
+            self.speak(f"Closed {closed_count} tabs.")
     
     def _handle_switch(self, target: str):
         """Switch to a tab matching the target."""
         if not target:
-            self.speak("Which tab should I switch to?")
             return
         
         result = self.browser.switch_to_tab_by_keyword(target)
         print(f"   {result}")
         
-        if "Switched to" in result:
-            self.speak(f"Switched to {target}")
-        else:
-            self.speak(f"Could not find a tab matching {target}")
+        if "Switched to" not in result:
+            self.speak("Tab not found.")
     
     def _handle_open(self, target: str):
         """Open a URL."""
         if not target:
-            self.speak("What website should I open?")
             return
         
         target_lower = target.lower().strip()
@@ -398,39 +371,29 @@ Output ONLY the JSON array, no explanation."""
         elif target.startswith("http"):
             url = target
         elif "." in target:
-            # Looks like a URL
             url = f"https://{target}"
         else:
-            # Check partial matches in SITE_URLS
+            # Check partial matches
             matched_url = None
             for site_name, site_url in self.SITE_URLS.items():
                 if target_lower in site_name or site_name in target_lower:
                     matched_url = site_url
                     break
-            
-            if matched_url:
-                url = matched_url
-            else:
-                # Last resort: add .com
-                url = f"https://{target_lower.replace(' ', '')}.com"
+            url = matched_url or f"https://{target_lower.replace(' ', '')}.com"
         
-        # Check if opening a distraction while in focus mode
+        # Block distractions in focus mode
         if self.focus_mode_active and self._is_distraction(url, target):
-            self.speak(f"You're in focus mode. {target} is a distraction. Say 'break time' first to access it.")
-            print(f"   🚫 Blocked distraction: {target}")
+            self.speak("Blocked. Say break time first.")
+            print(f"   🚫 Blocked: {target}")
             return
         
         success = self.browser.open_url(url, new_tab=True)
         if success:
-            self.speak(f"Opening {target}")
             print(f"   🌐 Opened: {url}")
-        else:
-            self.speak(f"Could not open {target}")
     
     def _handle_close(self, target: str):
         """Close tabs matching target."""
         if not target:
-            self.speak("Which tab should I close?")
             return
         
         tabs = self.browser.get_tabs()
@@ -445,16 +408,14 @@ Output ONLY the JSON array, no explanation."""
                     print(f"   🚫 Closed: {tab['title'][:40]}")
         
         if closed:
-            self.speak(f"Closed {closed} tabs matching {target}")
-        else:
-            self.speak(f"No tabs found matching {target}")
+            self.speak(f"Closed {closed}." if closed > 1 else "Closed.")
     
     def _handle_restore(self, target: str = None):
         """Restore tabs from backup."""
         backup = self._load_backup()
         
         if not backup:
-            self.speak("No tabs to restore.")
+            self.speak("Nothing to restore.")
             return
         
         # If target specified, filter
@@ -464,7 +425,6 @@ Output ONLY the JSON array, no explanation."""
                      or target_lower in t.get("url", "").lower()]
         
         if not backup:
-            self.speak(f"No backed up tabs matching {target}")
             return
         
         restored = 0
@@ -473,7 +433,8 @@ Output ONLY the JSON array, no explanation."""
                 restored += 1
                 print(f"   ✅ Restored: {tab['title'][:40]}")
         
-        self.speak(f"Restored {restored} tabs")
+        if restored:
+            self.speak(f"Restored {restored}.")
         
         # Clear restored from backup
         remaining = self._load_backup()[:-restored] if restored else []
@@ -484,41 +445,27 @@ Output ONLY the JSON array, no explanation."""
         """Set a new focus goal."""
         if goal:
             self.current_goal = goal
-            self.speak(f"Goal set to: {goal}. I'll help you stay focused.")
             print(f"🎯 New goal: {goal}")
-        else:
-            self.speak(f"Your current goal is: {self.current_goal}")
     
     def _handle_status(self):
         """Report current status."""
         tabs = self.browser.get_tabs()
-        
-        if self.focus_mode_active:
-            mode = "Focus mode is ACTIVE. Distractions will be closed automatically."
-        else:
-            mode = "Focus mode is OFF. You can browse freely."
-        
-        status = f"Goal: {self.current_goal}. {len(tabs)} tabs open. {mode}"
-        self.speak(status)
-        print(f"\n📊 STATUS:")
-        print(f"   🎯 Goal: {self.current_goal}")
-        print(f"   📑 Tabs: {len(tabs)}")
-        print(f"   🛡️ Focus Mode: {'ACTIVE' if self.focus_mode_active else 'OFF'}")
-        print(f"   👁️ Monitoring: {'ON' if self.monitoring_enabled else 'OFF'}")
+        mode = "on" if self.focus_mode_active else "off"
+        self.speak(f"{len(tabs)} tabs. Focus {mode}.")
+        print(f"\n📊 Tabs: {len(tabs)}, Focus: {mode.upper()}")
     
     def _handle_scan(self):
         """Scan and report tabs."""
         tabs = self.browser.get_tabs()
         
         if not tabs:
-            self.speak("No tabs found.")
             return
         
-        print(f"\n📑 Found {len(tabs)} tabs:")
+        print(f"\n📑 {len(tabs)} tabs:")
         for tab in tabs:
             print(f"   [{tab['id']}] {tab['title'][:50]}")
         
-        self.speak(f"You have {len(tabs)} tabs open. Check the console for the full list.")
+        self.speak(f"{len(tabs)} tabs.")
     
     def _backup_tabs(self, tabs: list):
         """Backup tabs before closing."""
@@ -616,7 +563,7 @@ Output ONLY the JSON array, no explanation."""
     
     def _monitor_loop(self):
         """Background monitoring loop - actively closes distractions when focus mode is on."""
-        print("👁️ Starting distraction monitor...")
+        print("👁️ Monitor started")
         
         while self.running:
             try:
@@ -635,43 +582,32 @@ Output ONLY the JSON array, no explanation."""
                 url = current_tab["url"]
                 title = current_tab["title"]
                 
-                # Skip if same as last check (no change)
-                if url == self.last_active_url:
-                    # But check if we're waiting on a warning
-                    if url in self.warned_tabs:
+                # Check if this is a distraction
+                if self._is_distraction(url, title):
+                    if url not in self.warned_tabs:
+                        # First warning - just speak and record time
+                        self.warned_tabs[url] = time.time()
+                        print(f"\n⚠️ Distraction: {title[:40]}")
+                        self.speak("Stay focused.")
+                    else:
+                        # Already warned - check if 3 seconds passed
                         elapsed = time.time() - self.warned_tabs[url]
                         if elapsed >= self.WARNING_COUNTDOWN:
-                            # Time's up - close it!
-                            print(f"⏰ AUTO-CLOSING: {title[:40]}")
-                            self.speak("Time's up. Closing distraction now.")
+                            # Time's up - close it silently
+                            print(f"⏰ Closing: {title[:40]}")
                             self._backup_tabs([current_tab])
                             self._close_active_tab()
                             del self.warned_tabs[url]
                             self.last_active_url = None
-                    time.sleep(1)  # Check more frequently when warning active
-                    continue
-                
-                self.last_active_url = url
-                
-                # Check if this is a distraction
-                if self._is_distraction(url, title):
-                    if url not in self.warned_tabs:
-                        # First time seeing this distraction - warn!
-                        self.warned_tabs[url] = time.time()
-                        print(f"\n⚠️ DISTRACTION DETECTED: {title[:50]}")
-                        print(f"   URL: {url[:60]}")
-                        print(f"   ⏳ Closing in {self.WARNING_COUNTDOWN} seconds...")
-                        self.speak(f"Warning! {title[:25]} is a distraction. Closing in 3 seconds. Switch away to cancel.")
                 else:
-                    # Not a distraction - clear any warnings for this URL
+                    # Not a distraction - clear warnings
                     if url in self.warned_tabs:
-                        print(f"✅ Switched to productive tab: {title[:40]}")
                         del self.warned_tabs[url]
+                    self.last_active_url = url
                 
-                time.sleep(self.MONITOR_INTERVAL)
+                time.sleep(1)  # Check every second for responsive closing
                 
             except Exception as e:
-                print(f"Monitor error: {e}")
                 time.sleep(self.MONITOR_INTERVAL)
     
     def _voice_loop(self):
@@ -693,8 +629,9 @@ Output ONLY the JSON array, no explanation."""
                 detected = self.listener.listen()
                 
                 if detected and self.running:
-                    print("✨ Wake word detected!")
-                    self.speak("Yes?")
+                    # Stop any ongoing speech immediately
+                    self.stop_speech()
+                    print("✨ Wake word!")
                     
                     # Listen for command
                     result = self.stt.listen_and_transcribe()
@@ -702,8 +639,6 @@ Output ONLY the JSON array, no explanation."""
                     if result and result.get("text"):
                         command = result["text"]
                         self.execute_command(command)
-                    else:
-                        print("❓ Could not understand command")
                         
             except KeyboardInterrupt:
                 break
@@ -727,7 +662,7 @@ Output ONLY the JSON array, no explanation."""
             print("\n\n👋 Shutting down Jarvis...")
         finally:
             self.running = False
-            self.speech_running = False
+            self.stop_speech()
             if self.listener:
                 self.listener.cleanup()
             print("Goodbye!")
