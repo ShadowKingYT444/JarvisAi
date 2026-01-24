@@ -1,59 +1,106 @@
 import sys
 import asyncio
+import qasync
+from PyQt6.QtWidgets import QApplication
 from wakeword.listener import WakeWordListener
 from wakeword.stt import SpeechToText
 from agent import BrowserAgent
+from jarvis_ui import JarvisOverlay
 
-async def main():
+async def run_jarvis_loop(overlay, loop):
+    """
+    Main asynchronous loop processing wake word and commands.
+    """
     print("--- JARVIS AGENT INITIALIZING ---")
-
+    
+    # Initialize components in executor to avoid blocking startup
     try:
-        listener = WakeWordListener()
-        stt = SpeechToText()
+        listener = await loop.run_in_executor(None, WakeWordListener)
+        stt = await loop.run_in_executor(None, SpeechToText)
     except Exception as e:
-        print(f"Startup Error: {e}")
+        print(f"Startup Error (Audio Components): {e}")
         return
 
-    # Initialize the browser agent
+    # Initialize Agent
     agent = BrowserAgent()
     try:
         await agent.start()
     except Exception as e:
         print(f"Agent Startup Error: {e}")
-        listener.cleanup()
+        if 'listener' in locals():
+            listener.cleanup()
         return
 
     print("System Ready. Say 'Jarvis' to activate.")
     
     try:
         while True:
-            # 1. Block locally until "Jarvis" is heard
-            listener.listen()
-            print("[+] Wake word detected!")
+            # 1. Wait for Wake Word (Blocking call run in thread)
+            print("Listening for wake word...")
             
-            # 2. Record and Transcribe via Cloud
-            result = stt.listen_and_transcribe()
+            # This runs the blocking listener.listen() in a separate thread,
+            # allowing the GUI to stay responsive (if we had animations running).
+            wake_detected = await loop.run_in_executor(None, listener.listen)
             
-            # 3. Handle Output
-            if result and result['text']:
-                command = result['text']
-                language = result.get('language', 'en')
-                print(f"Command ({language}): {command}")
+            if wake_detected:
+                print("[+] Wake word detected!")
                 
-                if "exit" in command.lower() or "quit" in command.lower():
-                    print("Shutting down.")
-                    break
+                # 2. ACTIVATE UI (Visual Feedback)
+                overlay.wake_up()
+                # Allow a brief moment for UI to render if needed, though wake_up calls show()
+                await asyncio.sleep(0.1) 
                 
-                # 4. Send the transcribed text to the agent
-                await agent.run_loop(command)
-            else:
-                print("[-] Could not understand.")
+                # 3. Listen for Command (Blocking call run in thread)
+                # We interpret speech after the wake word
+                result = await loop.run_in_executor(None, stt.listen_and_transcribe)
                 
+                # 4. Handle Command
+                if result and result.get('text'):
+                    command = result['text']
+                    print(f"Command: {command}")
+                    
+                    if "exit" in command.lower() or "quit" in command.lower():
+                        print("Shutting down.")
+                        break
+                    
+                    # 5. Execute Agent Action
+                    # agent.run_loop is async, so we await it directly
+                    await agent.run_loop(command)
+                else:
+                    print("[-] Could not understand command.")
+                
+                # 6. DEACTIVATE UI
+                overlay.sleep()
+                
+    except asyncio.CancelledError:
+        print("Task cancelled.")
     except KeyboardInterrupt:
-        print("\nStopping...")
+        print("Stopping...")
     finally:
+        print("Cleaning up resources...")
         await agent.stop()
-        listener.cleanup()
+        if 'listener' in locals():
+            listener.cleanup()
+        # Close the app
+        QApplication.instance().quit()
+
+def main():
+    # Create the Qt Application
+    app = QApplication(sys.argv)
+    
+    # Create the QAsync Event Loop
+    loop = qasync.QEventLoop(app)
+    asyncio.set_event_loop(loop)
+    
+    # Create UI
+    overlay = JarvisOverlay()
+    
+    # Schedule the main logic
+    loop.create_task(run_jarvis_loop(overlay, loop))
+    
+    # Run the loop
+    with loop:
+        loop.run_forever()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

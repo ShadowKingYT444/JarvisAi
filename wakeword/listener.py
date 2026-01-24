@@ -11,12 +11,15 @@ class WakeWordListener:
         if not self.access_key:
             raise ValueError("Missing PICOVOICE_ACCESS_KEY in .env")
 
-        # 1. Initialize Porcupine (The Brain)
-        # REMOVED: sensitivities=[0.7] (Back to default 0.5)
-        self.porcupine = pvporcupine.create(
-            access_key=self.access_key,
-            keywords=['jarvis']
-        )
+        try:
+            # 1. Initialize Porcupine (The Brain)
+            # REMOVED: sensitivities=[0.7] (Back to default 0.5)
+            self.porcupine = pvporcupine.create(
+                access_key=self.access_key,
+                keywords=['jarvis']
+            )
+        except Exception as e:
+            raise ValueError(f"Porcupine failed to initialize. Please check your PICOVOICE_ACCESS_KEY in .env. It may be invalid, expired, or you may have reached your usage limit. Original Error: {e}")
 
         # 2. Initialize Recorder (The Ears)
         # CHANGED: device_index=-1 (Auto-detects the best mic on ANY computer)
