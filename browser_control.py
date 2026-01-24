@@ -235,6 +235,56 @@ class AppleScriptBrowserControl:
                     return f"Failed to close tab {tab_id}"
         return f"Tab {tab_id} not found"
     
+    def get_active_tab(self) -> Optional[dict]:
+        """Get the currently active/frontmost tab using AppleScript."""
+        if self.browser == "chrome":
+            script = '''
+            tell application "Google Chrome"
+                set activeTab to active tab of front window
+                set tabTitle to title of activeTab
+                set tabURL to URL of activeTab
+                return tabTitle & "|||" & tabURL
+            end tell
+            '''
+        else:
+            script = '''
+            tell application "Safari"
+                set activeTab to current tab of window 1
+                set tabTitle to name of activeTab
+                set tabURL to URL of activeTab
+                return tabTitle & "|||" & tabURL
+            end tell
+            '''
+            
+        success, output = self._run_applescript(script)
+        
+        if success and "|||" in output:
+            parts = output.strip().split("|||")
+            if len(parts) >= 2:
+                return {
+                    "title": parts[0],
+                    "url": parts[1]
+                }
+        return None
+
+    def close_active_tab(self) -> bool:
+        """Close the currently active tab."""
+        if self.browser == "chrome":
+            script = '''
+            tell application "Google Chrome"
+                close active tab of front window
+            end tell
+            '''
+        else:
+            script = '''
+            tell application "Safari"
+                close current tab of window 1
+            end tell
+            '''
+        
+        success, _ = self._run_applescript(script)
+        return success
+
     def open_url(self, url: str, new_tab: bool = True) -> bool:
         """
         Open a URL in the browser.
