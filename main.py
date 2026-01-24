@@ -271,13 +271,35 @@ JSON only:"""
         print("👁️ Monitor started")
         while self.running:
             try:
-                if self.focus_mode_active:
-                    # Logic similar to before, simplified
-                    # Get active tab (requires applescript)
-                    # For now, let's just sleep to avoid blocking if not needed
-                    pass 
+                if self.focus_mode_active and self.monitoring_enabled:
+                    # Get active tab
+                    current = self.browser.get_active_tab()
+                    if current:
+                        url = current["url"]
+                        title = current["title"]
+                        
+                        if self._is_distraction(url, title):
+                            if url not in self.warned_tabs:
+                                # First warning
+                                self.warned_tabs[url] = time.time()
+                                print(f"⚠️ Distraction: {title[:30]}")
+                                self.speak("Stay focused.")
+                            else:
+                                # Check time
+                                if time.time() - self.warned_tabs[url] > self.WARNING_COUNTDOWN:
+                                    print(f"🚫 Closing: {title[:30]}")
+                                    self.browser.close_active_tab()
+                                    self.speak("Closing distraction.")
+                                    del self.warned_tabs[url]
+                        else:
+                            # Clear warning if we moved away
+                            if url in self.warned_tabs:
+                                del self.warned_tabs[url]
+                                
                 time.sleep(self.MONITOR_INTERVAL)
-            except: pass
+            except Exception as e:
+                # print(f"Monitor error: {e}")
+                pass
 
 class VoiceWorker(QThread):
     sig_wake = pyqtSignal()
