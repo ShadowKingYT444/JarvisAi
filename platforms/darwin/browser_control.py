@@ -333,3 +333,48 @@ class MacOSBrowserControl:
         
         success, _ = self._run_applescript(script)
         return success
+
+    def scour_tabs(self, distraction_patterns: list[str]):
+        """
+        Cycle through tabs and close any that match the distraction patterns.
+        On macOS, we can do this without visually switching tabs if we want,
+        but for parity with Windows/consistency, we'll just iterate the list we get.
+        """
+        print(f"\\n🧹 STARTING TAB SWEEP (Checking for distractions)...")
+        
+        # 1. Get all tabs
+        tabs = self.get_tabs()
+        if not tabs:
+            print("  No active tabs found.")
+            return
+
+        tabs_closed = 0
+        
+        # 2. Iterate and close distractions
+        # We iterate backwards or carefully so we don't invalidate indices?
+        # Ideally, we close by ID if supported, but our close_tab takes (window, index).
+        # Closing a tab changes the indices of subsequent tabs in that window.
+        # So it is SAFEST to sort by window, then by index DESCENDING.
+        
+        tabs.sort(key=lambda x: (x["window_id"], x["tab_index"]), reverse=True)
+        
+        for tab in tabs:
+            title = tab["title"]
+            url = tab["url"]
+            
+            # Check Distraction
+            is_distraction = False
+            for p in distraction_patterns:
+                if p in url.lower() or p in title.lower():
+                    is_distraction = True
+                    break
+            
+            if is_distraction:
+                print(f"  ❌ DISTRACTION DETECTED! Closing: {title[:20]}...")
+                success = self.close_tab(tab["window_id"], tab["tab_index"])
+                if success:
+                    tabs_closed += 1
+            # else:
+            #     print(f"  ✅ Safe: {title[:20]}...")
+
+        print(f"🧹 SWEEP COMPLETE. Closed {tabs_closed} tabs.\\n")
