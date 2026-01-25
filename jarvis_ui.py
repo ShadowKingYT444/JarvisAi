@@ -18,12 +18,16 @@ class JarvisOverlay(QWidget):
 
     def initUI(self):
         # Frameless, Always on Top, Transparent for Mouse, Tool
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint | 
-            Qt.WindowType.WindowStaysOnTopHint | 
-            Qt.WindowType.Tool |
-            Qt.WindowType.WindowTransparentForInput
-        )
+        flags = Qt.WindowType.FramelessWindowHint | \
+                Qt.WindowType.WindowStaysOnTopHint | \
+                Qt.WindowType.Tool | \
+                Qt.WindowType.WindowTransparentForInput
+        
+        # macOS specific: Remove system shadow so our glow is visible
+        if sys.platform == "darwin":
+            flags |= Qt.WindowType.NoDropShadowWindowHint
+            
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         
@@ -79,6 +83,7 @@ class JarvisOverlay(QWidget):
     def wake_up(self):
         """Show the overlay with animation."""
         self.show()
+        self.raise_()  # Critical for macOS to ensure it's above other apps
         # Fade In
         self.anim = QPropertyAnimation(self, b"border_opacity")
         self.anim.setDuration(300) # Fast wake up
