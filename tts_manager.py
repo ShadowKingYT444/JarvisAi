@@ -165,8 +165,16 @@ class WindowsTTS(TTSProvider):
     def wait(self):
         self.queue.join()
 
+class DummyTTS(TTSProvider):
+    def speak(self, text: str):
+        print(f"[DummyTTS] Speaking: {text}")
+
 def get_tts_provider():
-    if platform.system() == "Windows":
+    system = platform.system()
+    if system == "Windows":
         return WindowsTTS()
-    else:
+    elif system == "Darwin":
         return MacOSTTS()
+    else:
+        print(f"Warning: TTS not supported on {system}. Using fallback.")
+        return DummyTTS()

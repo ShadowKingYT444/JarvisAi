@@ -7,6 +7,8 @@ import sys
 import json
 import time
 import threading
+import argparse
+import re
 from typing import Optional
 
 from PyQt6.QtWidgets import QApplication
@@ -25,6 +27,22 @@ from platforms import get_browser_control
 from tts_manager import get_tts_provider
 from focus_manager import FocusManager
 from jarvis_ui import JarvisOverlay
+
+def remove_filler_words(text: str) -> str:
+    """Removes common filler words from the input text."""
+    fillers = [
+        r"\bum\b", r"\buh\b", r"\bah\b", r"\bmm\b", r"\bhm\b", r"\bhmm\b", 
+        r"\blike\b", r"\bactually\b", r"\bbasically\b", r"\bliterally\b",
+        r"\bstuttering\b"
+    ]
+    cleaned_text = text
+    for filler in fillers:
+        # Remove filler + optional following comma
+        cleaned_text = re.sub(filler + r"\s*,?", "", cleaned_text, flags=re.IGNORECASE)
+    
+    # Clean up multiple spaces and leading/trailing punctuation/whitespace
+    cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip(" ,.")
+    return cleaned_text
 
 class JarvisAgent:
     """Logic controller for Jarvis."""
@@ -87,12 +105,13 @@ class JarvisAgent:
         "amazon.com", "ebay.com"
     ]
 
-    def __init__(self):
+    def __init__(self, use_voice=True):
         self.listener = None
         self.stt = None
         self.browser = get_browser_control()
         self.tts = get_tts_provider()
         self.focus_manager = FocusManager()
+        self.use_voice = use_voice
         
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
@@ -100,7 +119,7 @@ class JarvisAgent:
              api_key = "AIzaSyCZi6VSgl4TAKxjyKBT83v906UGOxgmxRQ"
              
         self.gemini = genai.Client(api_key=api_key)
-        self.model = "gemini-2.0-flash"
+        self.model = "gemini-2.0-flash-exp"
         
         self.current_goal = "General productivity"
         self.focus_mode_active = False
@@ -113,8 +132,9 @@ class JarvisAgent:
     def initialize(self):
         print("🤖 Initializing Jarvis Agent...")
         try:
-            self.listener = WakeWordListener()
-            self.stt = SpeechToText()
+            if self.use_voice:
+                self.listener = WakeWordListener()
+                self.stt = SpeechToText()
             print(f"✅ Jarvis Agent initialized!")
             
             # Initial TTS
@@ -197,7 +217,7 @@ class JarvisAgent:
         print(f"🤔 Soren Pondering: {question}")
         try:
             # User requested 3.0, we use the absolute latest available experimental pro model.
-            soren_model = "gemini-2.0-pro-exp-02-05" 
+            soren_model = "gemini-2.0-flash-exp" 
             
             system_prompt = "You are Alyssa (also known as Soren), a helpful, flirtatious, and intelligent AI assistant. Keep answers concise (MAXIMUM 100 WORDS) and spoken-word friendly."
             response = self.gemini.models.generate_content(
@@ -252,9 +272,13 @@ class JarvisAgent:
                 self.tts.wait()
                 
                 # Listen for answer
-                response = self.stt.listen_and_transcribe()
-                if response and response.get("text"):
-                    target = response["text"]
+                if self.use_voice:
+                    response = self.stt.listen_and_transcribe()
+                    if response and response.get("text"):
+                        target = response["text"]
+                else:
+                    print(">> (Type your goal):")
+                    target = sys.stdin.readline().strip()
             
             self._handle_focus(target)
             
@@ -342,7 +366,8 @@ class JarvisAgent:
                                 
                 time.sleep(self.MONITOR_INTERVAL)
             except Exception as e:
-                pass
+                print(f"⚠️ Monitor Loop Error: {e}")
+                time.sleep(self.MONITOR_INTERVAL)
 
 class VoiceWorker(QThread):
     sig_wake_jarvis = pyqtSignal()
@@ -395,16 +420,91 @@ class VoiceWorker(QThread):
                 print(f"Error in voice loop: {e}")
                 time.sleep(1)
 
+class TextWorker(QThread):
+    sig_wake_jarvis = pyqtSignal()
+    sig_wake_soren = pyqtSignal()
+    sig_sleep = pyqtSignal()
+
+    def __init__(self, agent):
+        super().__init__()
+        self.agent = agent
+        self.running = True
+
+    def run(self):
+        print("⌨️ Text thread started. Type 'Jarvis, <command>' or 'Soren, <question>'")
+        while self.running:
+            try:
+                # Read from stdin (blocking)
+                raw_input = sys.stdin.readline().strip()
+                if not raw_input:
+                    continue
+                
+                # Check for exit
+                if raw_input.lower() in ["exit", "quit"]:
+                    self.running = False
+                    QApplication.quit()
+                    break
+
+                # Determine persona based on prefix
+                # Default to Jarvis if no prefix
+                text = raw_input
+                keyword_index = 0 # Default Jarvis
+
+                if raw_input.lower().startswith("soren") or raw_input.lower().startswith("alexa"):
+                    keyword_index = 1
+                    # Remove prefix
+                    text = re.sub(r"^(soren|alexa)[,\s]*", "", raw_input, flags=re.IGNORECASE)
+                elif raw_input.lower().startswith("jarvis"):
+                    keyword_index = 0
+                    # Remove prefix
+                    text = re.sub(r"^jarvis[,\s]*", "", raw_input, flags=re.IGNORECASE)
+                
+                # Filler Word Removal
+                text = remove_filler_words(text)
+                print(f"📝 Processed Input: '{text}'")
+
+                if keyword_index == 0:
+                    # JARVIS MODE
+                    self.agent.tts.set_voice_persona("jarvis")
+                    # self.agent.speak("Yes?") # Optional in text mode to be less noisy? But requested in specs.
+                    self.sig_wake_jarvis.emit()
+                    
+                    # Execute
+                    self.agent.execute_command(text)
+                else:
+                    # SOREN MODE
+                    self.agent.tts.set_voice_persona("soren")
+                    # self.agent.speak("Yes?")
+                    self.sig_wake_soren.emit()
+                    
+                    # Answer
+                    self.agent.answer_general_question(text)
+                
+                self.sig_sleep.emit()
+
+            except Exception as e:
+                print(f"Error in text loop: {e}")
+                time.sleep(1)
+
 def main():
+    sys.stdout.reconfigure(encoding='utf-8')
+    parser = argparse.ArgumentParser(description="Jarvis AI Agent")
+    parser.add_argument("--test", "--text", action="store_true", help="Run in text/test mode")
+    args = parser.parse_args()
+
     app = QApplication(sys.argv)
     print("--- JARVIS STARTING ---")
     
-    agent = JarvisAgent()
+    agent = JarvisAgent(use_voice=not args.test)
     if not agent.initialize():
         sys.exit(1)
         
     overlay = JarvisOverlay()
-    worker = VoiceWorker(agent)
+    
+    if args.test:
+        worker = TextWorker(agent)
+    else:
+        worker = VoiceWorker(agent)
     
     worker.sig_wake_jarvis.connect(overlay.wake_up)
     worker.sig_wake_soren.connect(overlay.wake_up)
