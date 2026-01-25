@@ -9,7 +9,9 @@ import pyautogui
 from io import BytesIO
 
 # Import the agent logic
-from agent_logic import agent_service
+
+# Import the agent logic
+# from agent_logic import agent_service (FIXME: agent_logic missing, suspect agent.py)
 
 class AgentWorker(QThread):
     finished = pyqtSignal(str)
@@ -22,10 +24,11 @@ class AgentWorker(QThread):
     def run(self):
         # Create a new event loop for this thread or run in a new loop
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(agent_service.process_request(self.command, self.screenshot))
-            loop.close()
+            # loop = asyncio.new_event_loop()
+            # asyncio.set_event_loop(loop)
+            # result = loop.run_until_complete(agent_service.process_request(self.command, self.screenshot))
+            # loop.close()
+            result = "Agent connection temporarily disabled for refactoring."
             self.finished.emit(str(result))
         except Exception as e:
             self.finished.emit(f"Error in worker: {e}")

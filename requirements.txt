@@ -24,3 +24,11 @@ playwright>=1.40.0
 
 # Environment & Utils
 python-dotenv>=1.0.0
+
+# Windows Support
+pyttsx3>=2.90
+uiautomation>=2.0.18
+pywin32>=306
+comtypes>=1.2.0
+pygame>=2.5.0
+requests>=2.31.0

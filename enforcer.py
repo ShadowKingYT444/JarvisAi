@@ -16,13 +16,14 @@ import json
 from datetime import datetime
 
 from focus_manager import FocusManager
-from browser_control import AppleScriptBrowserControl
+from focus_manager import FocusManager
+from platforms import get_browser_control
 
 
 class Enforcer:
     """
     The Enforcer connects to Chrome/Safari, evaluates tabs, and closes distractions.
-    Uses AppleScript instead of CDP - works on managed Macs.
+    Uses platform-agnostic control (AppleScript on macOS, UIAutomation on Windows).
     """
     
     BACKUP_FILE = "session_backup.json"
@@ -32,7 +33,7 @@ class Enforcer:
         Args:
             browser: "chrome" or "safari"
         """
-        self.browser_control = AppleScriptBrowserControl(browser)
+        self.browser_control = get_browser_control(browser)
         self.focus_manager = FocusManager()
         self.browser_name = browser
     

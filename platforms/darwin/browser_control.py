@@ -9,8 +9,7 @@ import subprocess
 import json
 from typing import Optional
 
-
-class AppleScriptBrowserControl:
+class MacOSBrowserControl:
     """
     Control Chrome or Safari tabs using AppleScript.
     No debug mode required - works on managed Macs.
@@ -334,31 +333,3 @@ class AppleScriptBrowserControl:
         
         success, _ = self._run_applescript(script)
         return success
-
-
-# Singleton instances
-chrome_control = AppleScriptBrowserControl("chrome")
-safari_control = AppleScriptBrowserControl("safari")
-
-
-# --- Test ---
-if __name__ == "__main__":
-    print("🌐 Browser Control Test (AppleScript)")
-    print("=" * 50)
-    
-    bc = AppleScriptBrowserControl("chrome")
-    
-    print("\n📑 Scanning Chrome tabs...")
-    tabs = bc.get_tabs()
-    
-    if not tabs:
-        print("No tabs found or Chrome is not running")
-    else:
-        print(f"Found {len(tabs)} tabs:\n")
-        for tab in tabs:
-            print(f"  [{tab['id']}] W{tab['window_id']}/T{tab['tab_index']}: {tab['title'][:50]}")
-            print(f"       {tab['url'][:60]}")
-        
-        print("\n" + "=" * 50)
-        print("Test complete! You can now use these tabs with FocusManager.")
-
