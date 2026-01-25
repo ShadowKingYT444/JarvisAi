@@ -196,12 +196,10 @@ class JarvisAgent:
         """Ask Gemini a question and speak the answer as Soren/Alexa."""
         print(f"🤔 Soren Pondering: {question}")
         try:
-            # User requested 3.0, we use the absolute latest available.
-            # "gemini-2.0-pro-exp" or custom if available. 
-            # Fallback to flash if pro fails.
-            soren_model = "gemini-2.0-flash-exp" 
+            # User requested 3.0, we use the absolute latest available experimental pro model.
+            soren_model = "gemini-2.0-pro-exp-02-05" 
             
-            system_prompt = "You are Alyssa (also known as Soren), a helpful, flirtatious, and intelligent AI assistant. Keep answers concise (max 2 sentences) and spoken-word friendly."
+            system_prompt = "You are Alyssa (also known as Soren), a helpful, flirtatious, and intelligent AI assistant. Keep answers concise (MAXIMUM 100 WORDS) and spoken-word friendly."
             response = self.gemini.models.generate_content(
                 model=soren_model,
                 contents=f"{system_prompt}\nUser Question: {question}",
