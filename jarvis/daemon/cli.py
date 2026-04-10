@@ -82,6 +82,8 @@ def cmd_start(args):
     python = sys.executable
 
     cmd = [python, str(service_path)]
+    if getattr(args, "headless", False):
+        cmd.append("--headless")
     if getattr(args, "test", False):
         cmd.append("--test")
         # In test mode, run in foreground
@@ -192,9 +194,18 @@ def cmd_config(args):
 
 
 def cmd_install(args):
-    """Install Jarvis auto-start."""
-    from jarvis.daemon.installer import install
-    install()
+    """Install Jarvis via GUI wizard (or CLI with --no-gui)."""
+    if getattr(args, "no_gui", False):
+        from jarvis.daemon.installer import install
+        install()
+    else:
+        try:
+            from jarvis.face.installer_wizard import install_gui
+            install_gui()
+        except ImportError:
+            print("PyQt6 not available — falling back to CLI installer.")
+            from jarvis.daemon.installer import install
+            install()
 
 
 def cmd_uninstall(args):
@@ -226,6 +237,7 @@ def main():
     # start
     start_parser = subparsers.add_parser("start", help="Start Jarvis daemon")
     start_parser.add_argument("--test", "--text", action="store_true", help="Text mode")
+    start_parser.add_argument("--headless", action="store_true", help="No GUI (lower RAM)")
     start_parser.set_defaults(func=cmd_start)
 
     # stop
@@ -254,8 +266,14 @@ def main():
     config_parser.set_defaults(func=cmd_config)
 
     # install
-    install_parser = subparsers.add_parser("install", help="Install auto-start")
+    install_parser = subparsers.add_parser("install", help="Install via GUI wizard")
+    install_parser.add_argument("--no-gui", action="store_true", help="CLI-only install")
     install_parser.set_defaults(func=cmd_install)
+
+    # setup (alias for install)
+    setup_parser = subparsers.add_parser("setup", help="Setup wizard (alias for install)")
+    setup_parser.add_argument("--no-gui", action="store_true", help="CLI-only install")
+    setup_parser.set_defaults(func=cmd_install)
 
     # uninstall
     uninstall_parser = subparsers.add_parser("uninstall", help="Remove auto-start")

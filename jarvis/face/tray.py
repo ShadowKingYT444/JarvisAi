@@ -60,6 +60,7 @@ class SystemTray:
         """Create the system tray icon and menu."""
         try:
             from PyQt6.QtGui import QAction, QIcon, QPixmap, QColor, QPainter
+            from PyQt6.QtCore import Qt
             from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
             if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -68,7 +69,20 @@ class SystemTray:
 
             self._tray = QSystemTrayIcon(self._app)
 
-            # Create initial icon
+            # Pre-render and cache all state icons
+            self._icon_cache: dict[JarvisState, QIcon] = {}
+            for state, (r, g, b) in STATE_COLORS.items():
+                pixmap = QPixmap(32, 32)
+                pixmap.fill(QColor(0, 0, 0, 0))
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setBrush(QColor(r, g, b))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(2, 2, 28, 28)
+                painter.end()
+                self._icon_cache[state] = QIcon(pixmap)
+
+            # Set initial icon from cache
             self._update_icon(JarvisState.IDLE)
 
             # Context menu
@@ -119,24 +133,12 @@ class SystemTray:
             logger.exception("Failed to set up system tray")
 
     def _update_icon(self, state: JarvisState) -> None:
-        """Generate a colored circle icon for the given state."""
+        """Set the tray icon from the pre-rendered cache."""
         try:
-            from PyQt6.QtCore import Qt
-            from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
-
-            r, g, b = STATE_COLORS.get(state, (128, 128, 128))
-            pixmap = QPixmap(32, 32)
-            pixmap.fill(QColor(0, 0, 0, 0))
-
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setBrush(QColor(r, g, b))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(2, 2, 28, 28)
-            painter.end()
-
-            if self._tray:
-                self._tray.setIcon(QIcon(pixmap))
+            if self._tray and hasattr(self, "_icon_cache"):
+                icon = self._icon_cache.get(state)
+                if icon:
+                    self._tray.setIcon(icon)
         except Exception:
             logger.exception("Failed to update tray icon")
 
@@ -167,17 +169,27 @@ class SystemTray:
         self._event_bus.emit("tray_text_mode", None)
 
     def _open_settings(self) -> None:
-        """Open config file in the system editor."""
-        config_path = Path(self._config.jarvis_home).expanduser() / "config.yaml"
+        """Open the GUI settings dialog."""
         try:
-            if sys.platform == "darwin":
-                subprocess.Popen(["open", str(config_path)])
-            elif sys.platform == "win32":
-                os.startfile(str(config_path))
-            else:
-                subprocess.Popen(["xdg-open", str(config_path)])
+            from jarvis.face.settings_dialog import SettingsDialog
+
+            dialog = SettingsDialog(config=self._config, event_bus=self._event_bus)
+            dialog.show()
+            # Reload config after dialog closes
+            self._config = JarvisConfig.load()
         except Exception:
-            logger.exception("Failed to open config file")
+            logger.exception("Failed to open settings dialog")
+            # Fallback: open YAML file in editor
+            config_path = Path(self._config.jarvis_home).expanduser() / "config.yaml"
+            try:
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", str(config_path)])
+                elif sys.platform == "win32":
+                    os.startfile(str(config_path))
+                else:
+                    subprocess.Popen(["xdg-open", str(config_path)])
+            except Exception:
+                logger.exception("Failed to open config file")
 
     def _open_log(self) -> None:
         """Open today's conversation log."""

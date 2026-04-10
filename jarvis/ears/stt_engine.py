@@ -9,6 +9,7 @@ partial transcripts (:meth:`listen_stream`).
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import time
 from typing import AsyncIterator
@@ -75,6 +76,8 @@ class STTEngine:
         self._recording = False
         self._max_record_s: float = float(self._config.max_record_s)
         self._silence_threshold_s: float = _SILENCE_THRESHOLD_S
+        self._unload_handle: asyncio.TimerHandle | None = None
+        self._MODEL_IDLE_TIMEOUT_S = 120  # unload after 2 min idle
 
     # ------------------------------------------------------------------
     # Lazy model / VAD initialisation
@@ -126,6 +129,7 @@ class STTEngine:
         )
 
         self._event_bus.emit("transcript_final", result)
+        self._schedule_unload()
         return result
 
     async def listen_stream(self) -> AsyncIterator[str]:
@@ -221,6 +225,33 @@ class STTEngine:
         """Cancel an in-progress recording immediately."""
         self._cancelled = True
         logger.info("STTEngine recording cancelled")
+
+    def unload_model(self) -> None:
+        """Release the Whisper model to free RAM."""
+        if self._model is not None:
+            self._model = None
+            gc.collect()
+            logger.info("Whisper model unloaded to free RAM")
+
+    def _schedule_unload(self) -> None:
+        """Schedule model unloading after idle timeout."""
+        if self._config.keep_model_loaded:
+            return
+        # Cancel previous timer
+        if self._unload_handle is not None:
+            self._unload_handle.cancel()
+        try:
+            loop = asyncio.get_event_loop()
+            self._unload_handle = loop.call_later(
+                self._MODEL_IDLE_TIMEOUT_S, self._maybe_unload
+            )
+        except RuntimeError:
+            pass  # no event loop
+
+    def _maybe_unload(self) -> None:
+        """Unload model if not currently recording."""
+        if not self._recording:
+            self.unload_model()
 
     # ------------------------------------------------------------------
     # Internals

@@ -12,12 +12,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import google.generativeai as genai
-from google.generativeai import protos
-
-from jarvis.brain.conversation import ConversationManager
-from jarvis.brain.tool_definitions import get_tool_config, get_tool_declarations
-from jarvis.hands.tool_executor import ToolExecutor
 from jarvis.shared.config import JarvisConfig
 from jarvis.shared.events import EventBus
 from jarvis.shared.types import BrainResponse, ToolCall, ToolResult
@@ -75,31 +69,40 @@ class BrainOrchestrator:
 
     def __init__(
         self,
-        tool_executor: ToolExecutor,
+        tool_executor: "ToolExecutor",
         config: JarvisConfig,
         event_bus: EventBus | None = None,
     ) -> None:
         self._executor = tool_executor
         self._config = config
         self._event_bus = event_bus
+        self._model = None
+        self._conversation = None
+        self._protos = None  # lazy reference to google.generativeai.protos
 
-        # Configure the Gemini SDK with the API key.
-        genai.configure(api_key=config.gemini_api_key)
+    def _ensure_model(self) -> None:
+        """Lazy-load the Gemini SDK and create the model on first use."""
+        if self._model is not None:
+            return
 
-        # Load the system prompt once.
-        self._system_prompt = _load_system_prompt()
+        import google.generativeai as genai
+        from google.generativeai import protos
+        from jarvis.brain.conversation import ConversationManager
+        from jarvis.brain.tool_definitions import get_tool_config, get_tool_declarations
 
-        # Build the generative model.
+        self._protos = protos
+        genai.configure(api_key=self._config.gemini_api_key)
+
         self._model = genai.GenerativeModel(
-            model_name=config.gemini_model,
-            system_instruction=self._system_prompt,
+            model_name=self._config.gemini_model,
+            system_instruction=_load_system_prompt(),
             tools=[protos.Tool(function_declarations=get_tool_declarations())],
             tool_config=get_tool_config(),
         )
 
-        # Conversation manager for history tracking.
-        self._conversation = ConversationManager(config)
+        self._conversation = ConversationManager(self._config)
         self._conversation.load_today()
+        logger.info("Brain initialized (Gemini %s)", self._config.gemini_model)
 
     # ------------------------------------------------------------------
     # Public API
@@ -116,6 +119,9 @@ class BrainOrchestrator:
         4. When Gemini returns a text response, package it as a
            :class:`BrainResponse` and return.
         """
+        self._ensure_model()
+        protos = self._protos
+
         self._conversation.add_user_message(user_text)
 
         all_tool_calls: list[ToolCall] = []

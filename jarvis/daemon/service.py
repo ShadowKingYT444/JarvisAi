@@ -15,7 +15,7 @@ from pathlib import Path
 logger = logging.getLogger("jarvis")
 
 
-async def run_service(test_mode: bool = False) -> None:
+async def run_service(test_mode: bool = False, headless: bool = False) -> None:
     """Start the Jarvis daemon.
 
     Parameters
@@ -23,6 +23,8 @@ async def run_service(test_mode: bool = False) -> None:
     test_mode:
         If ``True``, disables mic/clap detection and reads commands
         from stdin instead (for CI and development).
+    headless:
+        If ``True``, skips all GUI initialization to save RAM.
     """
     from jarvis.shared.config import JarvisConfig
     from jarvis.shared.events import EventBus
@@ -32,32 +34,38 @@ async def run_service(test_mode: bool = False) -> None:
     # 1. Load config
     config = JarvisConfig.load()
     config.ensure_dirs()
+    if config.headless:
+        headless = True
 
     # 2. Set up logging
     _setup_logging(config)
-    logger.info("Jarvis v2.0 starting (test_mode=%s)", test_mode)
+    logger.info("Jarvis v2.0 starting (test_mode=%s, headless=%s)", test_mode, headless)
 
     # 3. Event bus + state manager
     event_bus = EventBus()
     state_mgr = StateManager(event_bus=event_bus)
 
-    # 4. Platform + tool executor
-    from jarvis.hands.platform import get_platform
-    from jarvis.hands.tool_executor import ToolExecutor
+    # 4. Brain + tools — lazy-loaded on first command to reduce idle RAM
+    _brain = None
 
-    platform = get_platform()
-    tool_executor = ToolExecutor(platform=platform, config=config, event_bus=event_bus)
+    async def _get_brain():
+        nonlocal _brain
+        if _brain is None:
+            from jarvis.hands.platform import get_platform
+            from jarvis.hands.tool_executor import ToolExecutor
+            from jarvis.brain.orchestrator import BrainOrchestrator
 
-    # 5. Brain
-    from jarvis.brain.orchestrator import BrainOrchestrator
+            platform = get_platform()
+            tool_executor = ToolExecutor(platform=platform, config=config)
+            _brain = BrainOrchestrator(
+                tool_executor=tool_executor,
+                config=config,
+                event_bus=event_bus,
+            )
+            logger.info("Brain + tools loaded on first command")
+        return _brain
 
-    brain = BrainOrchestrator(
-        tool_executor=tool_executor,
-        config=config,
-        event_bus=event_bus,
-    )
-
-    # 6. TTS + speech queue
+    # 5. TTS + speech queue
     from jarvis.voice.tts_engine import TTSEngine
     from jarvis.voice.speech_queue import SpeechQueue
 
@@ -65,7 +73,7 @@ async def run_service(test_mode: bool = False) -> None:
     speech_queue = SpeechQueue(tts_engine=tts_engine, event_bus=event_bus)
     await speech_queue.start()
 
-    # 7. Process a single command
+    # 6. Process a single command
     async def process_command(text: str) -> str:
         """Run one command through the full pipeline."""
         if not text.strip():
@@ -74,6 +82,7 @@ async def run_service(test_mode: bool = False) -> None:
         state_mgr.set_state(JarvisState.PROCESSING)
 
         try:
+            brain = await _get_brain()
             response = await brain.process(text)
 
             if response.error:
@@ -105,6 +114,7 @@ async def run_service(test_mode: bool = False) -> None:
             state_mgr=state_mgr,
             process_command=process_command,
             speech_queue=speech_queue,
+            headless=headless,
         )
 
 
@@ -147,6 +157,7 @@ async def _run_full_mode(
     state_mgr,
     process_command,
     speech_queue,
+    headless=False,
 ) -> None:
     """Full mode with clap detection, STT, and GUI."""
     from jarvis.shared.types import JarvisState
@@ -199,7 +210,10 @@ async def _run_full_mode(
     )
 
     # Try to set up GUI (optional — works without it)
-    _try_setup_gui(event_bus, config)
+    if not headless:
+        _try_setup_gui(event_bus, config)
+    else:
+        logger.info("Headless mode — skipping GUI")
 
     # Start clap detection
     logger.info("Starting clap detection — double-clap to activate")
@@ -329,9 +343,14 @@ def main():
         dest="test_mode",
         help="Run in text mode (stdin commands, no mic/clap/GUI)",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Skip GUI initialization to reduce RAM usage",
+    )
     args = parser.parse_args()
 
-    asyncio.run(run_service(test_mode=args.test_mode))
+    asyncio.run(run_service(test_mode=args.test_mode, headless=args.headless))
 
 
 if __name__ == "__main__":

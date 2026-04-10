@@ -15,8 +15,14 @@ from pathlib import Path
 PLIST_LABEL = "com.jarvis.agent"
 
 
-def install() -> None:
-    """Install Jarvis auto-start for the current platform."""
+def install(config_overrides: dict | None = None) -> None:
+    """Install Jarvis auto-start for the current platform.
+
+    Parameters
+    ----------
+    config_overrides:
+        Optional dict of config values to write instead of defaults.
+    """
     system = platform.system()
 
     # Create ~/.jarvis directory structure
@@ -24,18 +30,27 @@ def install() -> None:
     for subdir in ("logs", "conversations", "backups"):
         (jarvis_home / subdir).mkdir(parents=True, exist_ok=True)
 
-    # Create default config if missing
+    # Create config — use overrides if provided, otherwise platform defaults
     config_path = jarvis_home / "config.yaml"
-    if not config_path.exists():
+    if config_overrides:
+        from jarvis.shared.config import JarvisConfig
+        config = JarvisConfig(**{
+            k: v for k, v in config_overrides.items()
+            if k in {f.name for f in JarvisConfig.__dataclass_fields__.values()}
+        })
+        config.save(str(config_path))
+        print(f"Saved config: {config_path}")
+    elif not config_path.exists():
+        default_tts = "macos_say" if system == "Darwin" else "pyttsx3"
         config_path.write_text(
             "# Jarvis AI Configuration\n"
-            "gemini_model: gemini-2.0-flash\n"
-            "whisper_model_size: base.en\n"
-            "tts_engine: macos_say\n"
-            "tts_voice: Daniel\n"
-            "tts_rate: 180\n"
-            "clap_sensitivity: 0.7\n"
-            "search_provider: google_cse\n"
+            f"gemini_model: gemini-2.0-flash\n"
+            f"whisper_model_size: base.en\n"
+            f"tts_engine: {default_tts}\n"
+            f"tts_voice: {'Daniel' if system == 'Darwin' else ''}\n"
+            f"tts_rate: 180\n"
+            f"clap_sensitivity: 0.7\n"
+            f"search_provider: google_cse\n"
         )
         print(f"Created default config: {config_path}")
 

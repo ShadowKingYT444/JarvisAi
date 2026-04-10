@@ -15,7 +15,6 @@ dependencies = [
     "sounddevice>=0.4.6",
     "numpy>=1.24.0",
     "scipy>=1.11.0",
-    "librosa>=0.10.0",
     "pyttsx3>=2.90",
     "PyQt6>=6.6.0",
     "qasync>=0.27.0",

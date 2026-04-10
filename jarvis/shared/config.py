@@ -39,6 +39,10 @@ class JarvisConfig:
     focus_check_interval_s: int = 30
     focus_warn_before_close_s: int = 10
 
+    # Performance
+    keep_model_loaded: bool = False  # Keep Whisper model in RAM between uses
+    headless: bool = False  # Skip GUI initialization entirely
+
     # Paths
     jarvis_home: str = "~/.jarvis"
     log_dir: str = "~/.jarvis/logs"
@@ -106,6 +110,26 @@ class JarvisConfig:
 
         with open(expanded, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+    def save_env(self, path: str = "~/.jarvis/.env") -> None:
+        """Write secret fields to the .env file."""
+        expanded = Path(path).expanduser()
+        expanded.parent.mkdir(parents=True, exist_ok=True)
+
+        lines = [
+            "# Jarvis API Keys",
+            f"GOOGLE_API_KEY={self.gemini_api_key}",
+            f"SEARCH_API_KEY={self.search_api_key}",
+            f"SEARCH_ENGINE_ID={self.search_engine_id}",
+        ]
+        if self.elevenlabs_api_key:
+            lines.append(f"ELEVENLABS_API_KEY={self.elevenlabs_api_key}")
+
+        expanded.write_text("\n".join(lines) + "\n")
+        try:
+            expanded.chmod(0o600)
+        except OSError:
+            pass  # Windows doesn't support Unix permissions
 
     def ensure_dirs(self) -> None:
         """Create required directories if they don't exist."""
