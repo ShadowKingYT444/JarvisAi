@@ -1,0 +1,1 @@
+"""Daemon — persistent background service."""
