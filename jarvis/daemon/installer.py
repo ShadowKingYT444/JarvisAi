@@ -1,7 +1,7 @@
 """Jarvis auto-start installer.
 
-Creates launchd plist (macOS) or Task Scheduler entry (Windows)
-for automatic startup on login.
+Creates launchd plist (macOS), Task Scheduler entry (Windows),
+or systemd user service (Linux) for automatic startup on login.
 """
 
 from __future__ import annotations
@@ -13,6 +13,16 @@ import sys
 from pathlib import Path
 
 PLIST_LABEL = "com.jarvis.agent"
+
+
+def _get_venv_python() -> str:
+    """Get the correct Python executable, preferring the venv's pythonw on Windows."""
+    venv_dir = os.environ.get("VIRTUAL_ENV")
+    if venv_dir and sys.platform == "win32":
+        pythonw = Path(venv_dir) / "Scripts" / "pythonw.exe"
+        if pythonw.exists():
+            return str(pythonw)
+    return sys.executable
 
 
 def install(config_overrides: dict | None = None) -> None:
@@ -30,7 +40,7 @@ def install(config_overrides: dict | None = None) -> None:
     for subdir in ("logs", "conversations", "backups"):
         (jarvis_home / subdir).mkdir(parents=True, exist_ok=True)
 
-    # Create config — use overrides if provided, otherwise platform defaults
+    # Create config -- use overrides if provided, otherwise platform defaults
     config_path = jarvis_home / "config.yaml"
     if config_overrides:
         from jarvis.shared.config import JarvisConfig
@@ -64,7 +74,10 @@ def install(config_overrides: dict | None = None) -> None:
             "SEARCH_ENGINE_ID=\n"
             "# ELEVENLABS_API_KEY=\n"
         )
-        env_path.chmod(0o600)
+        try:
+            env_path.chmod(0o600)
+        except OSError:
+            pass  # Windows doesn't support Unix permissions
         print(f"Created .env template: {env_path}")
         print("  -> Edit this file to add your API keys!")
 
@@ -92,7 +105,7 @@ def uninstall() -> None:
         print(f"Unsupported platform: {system}")
 
 
-# ── macOS (launchd) ─────────────────────────────────────────────────
+# -- macOS (launchd) -------------------------------------------------------
 
 
 def _install_macos() -> None:
@@ -143,18 +156,18 @@ def _uninstall_macos() -> None:
         print("Jarvis auto-start is not installed.")
 
 
-# ── Windows (Task Scheduler) ────────────────────────────────────────
+# -- Windows (Task Scheduler) ----------------------------------------------
 
 
 def _install_windows() -> None:
-    python = sys.executable
+    python = _get_venv_python()
     service_path = str(Path(__file__).parent / "service.py")
 
     # Create scheduled task
     cmd = [
         "schtasks", "/create",
         "/tn", "JarvisAI",
-        "/tr", f'"{python}" "{service_path}"',
+        "/tr", f'"{python}" "{service_path}" --headless',
         "/sc", "onlogon",
         "/rl", "highest",
         "/f",
@@ -165,6 +178,7 @@ def _install_windows() -> None:
         print("Jarvis will start automatically on login.")
     else:
         print(f"Failed to create scheduled task: {result.stderr}")
+        print("You can still run Jarvis manually: jarvis start --headless")
 
 
 def _uninstall_windows() -> None:
@@ -178,7 +192,7 @@ def _uninstall_windows() -> None:
         print("Jarvis auto-start is not installed.")
 
 
-# ── Linux (systemd user service) ────────────────────────────────────
+# -- Linux (systemd user service) ------------------------------------------
 
 
 def _install_linux() -> None:

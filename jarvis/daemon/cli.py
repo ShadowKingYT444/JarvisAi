@@ -1,7 +1,6 @@
-"""Jarvis CLI — lightweight interface to the running daemon.
+"""Jarvis CLI -- lightweight interface to the running daemon.
 
-Communicates with the daemon over a Unix domain socket (macOS/Linux)
-or named pipe (Windows).
+Communicates with the daemon over TCP localhost.
 
 Usage::
 
@@ -22,28 +21,41 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import signal
 import subprocess
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
 
-def _get_socket_path() -> Path:
-    return Path("~/.jarvis/jarvis.sock").expanduser()
+def _get_port_file() -> Path:
+    return Path("~/.jarvis/jarvis.port").expanduser()
 
 
 def _get_pid_file() -> Path:
     return Path("~/.jarvis/jarvis.pid").expanduser()
 
 
+def _get_ipc_port() -> int | None:
+    """Read the IPC port from the port file."""
+    port_file = _get_port_file()
+    if not port_file.exists():
+        return None
+    try:
+        return int(port_file.read_text().strip())
+    except (ValueError, OSError):
+        return None
+
+
 async def _send_ipc(message: str) -> str | None:
     """Send a message to the running daemon and return the response."""
-    socket_path = _get_socket_path()
-    if not socket_path.exists():
+    port = _get_ipc_port()
+    if port is None:
         return None
 
     try:
-        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
         writer.write(message.encode("utf-8"))
         await writer.drain()
         writer.write_eof()
@@ -93,12 +105,25 @@ def cmd_start(args):
         pid_file = _get_pid_file()
         pid_file.parent.mkdir(parents=True, exist_ok=True)
 
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        if sys.platform == "win32":
+            # Use pythonw.exe for windowless background process
+            pythonw = python.replace("python.exe", "pythonw.exe")
+            if Path(pythonw).exists():
+                cmd[0] = pythonw
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        else:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
         pid_file.write_text(str(proc.pid))
         print(f"Jarvis started (PID {proc.pid})")
 
@@ -110,19 +135,39 @@ def cmd_stop(args):
         print("Jarvis is not running.")
         return
 
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, 15)  # SIGTERM
-        print(f"Jarvis stopped (PID {pid})")
-        pid_file.unlink(missing_ok=True)
-    except (ValueError, OSError) as e:
-        print(f"Failed to stop Jarvis: {e}")
-        pid_file.unlink(missing_ok=True)
+    # Try graceful IPC stop first
+    response = asyncio.run(_send_ipc("__stop__"))
+    if response:
+        print("Jarvis stopping gracefully...")
+        # Wait briefly for process to exit
+        try:
+            pid = int(pid_file.read_text().strip())
+            for _ in range(30):  # wait up to 3 seconds
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.1)
+                except OSError:
+                    break
+        except (ValueError, OSError):
+            pass
+    else:
+        # Fallback: kill the process directly
+        try:
+            pid = int(pid_file.read_text().strip())
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
+                    capture_output=True,
+                )
+            else:
+                os.kill(pid, signal.SIGTERM)
+            print(f"Jarvis stopped (PID {pid})")
+        except (ValueError, OSError) as e:
+            print(f"Failed to stop Jarvis: {e}")
 
-    # Clean up socket
-    socket_path = _get_socket_path()
-    if socket_path.exists():
-        socket_path.unlink()
+    pid_file.unlink(missing_ok=True)
+    port_file = _get_port_file()
+    port_file.unlink(missing_ok=True)
 
 
 def cmd_restart(args):
@@ -168,7 +213,19 @@ def cmd_log(args):
         return
 
     try:
-        subprocess.run(["tail", "-f", str(log_path)])
+        with open(log_path, "r") as f:
+            # Print last 20 lines
+            lines = f.readlines()
+            for line in lines[-20:]:
+                print(line, end="")
+            # Follow new lines
+            print("\n--- Following log (Ctrl+C to stop) ---")
+            while True:
+                line = f.readline()
+                if line:
+                    print(line, end="")
+                else:
+                    time.sleep(0.5)
     except KeyboardInterrupt:
         pass
 
@@ -184,12 +241,14 @@ def cmd_config(args):
             "# See docs for all options\n\n"
             "gemini_model: gemini-2.0-flash\n"
             "whisper_model_size: base.en\n"
-            "tts_engine: macos_say\n"
-            "tts_voice: Daniel\n"
+            "tts_engine: pyttsx3\n"
             "clap_sensitivity: 0.7\n"
         )
 
-    editor = os.environ.get("EDITOR", "nano")
+    if sys.platform == "win32":
+        editor = os.environ.get("EDITOR", "notepad")
+    else:
+        editor = os.environ.get("EDITOR", "nano")
     subprocess.run([editor, str(config_path)])
 
 
@@ -203,7 +262,7 @@ def cmd_install(args):
             from jarvis.face.installer_wizard import install_gui
             install_gui()
         except ImportError:
-            print("PyQt6 not available — falling back to CLI installer.")
+            print("PyQt6 not available -- falling back to CLI installer.")
             from jarvis.daemon.installer import install
             install()
 

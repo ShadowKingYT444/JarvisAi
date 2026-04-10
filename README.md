@@ -41,29 +41,47 @@ JARVIS DAEMON (always-on)
 
 ---
 
-## Getting Started
+## Installation
 
-### Prerequisites
-- Python 3.11+
-- macOS, Windows, or Linux
-- Google Chrome or Safari (for browser control)
+### Windows (Recommended)
 
-### Installation
+1. Download the latest release from [GitHub Releases](../../releases)
+2. Extract the zip file
+3. Double-click **`setup.bat`**
+4. Follow the prompts — you'll need a [Gemini API key](https://ai.google.dev) (free)
+
+That's it. Jarvis will auto-start on login and run in the background.
+
+### Any OS (pip install)
 
 ```bash
-git clone https://github.com/ShadowKingYT444/JarvisAi.git
-cd JarvisAi
+git clone https://github.com/minutecoder34-cmd/JarvisAi.git
+cd JarvisAi/JarvisAi-2.0.0
 
-# Install dependencies
-pip install -r jarvis/requirements.txt
+# Install the package
+pip install .
 
-# Run the installer (creates ~/.jarvis, config, and auto-start)
+# Run the setup wizard (creates config + auto-start)
 jarvis install
+
+# Start headless background daemon
+jarvis start --headless
 ```
 
-### API Keys
+### Developer Install
 
-Edit `~/.jarvis/.env` with your keys:
+```bash
+pip install -e ".[dev]"
+```
+
+---
+
+## API Keys
+
+You need a **Gemini API key** (required) and optionally a **Google CSE key** for web search.
+
+The installer will prompt for these. You can also edit `~/.jarvis/.env` directly:
+
 ```env
 GOOGLE_API_KEY=your_gemini_api_key
 SEARCH_API_KEY=your_google_cse_or_serpapi_key
@@ -71,17 +89,21 @@ SEARCH_ENGINE_ID=your_google_cse_id
 # ELEVENLABS_API_KEY=optional_premium_tts
 ```
 
-### Usage
+---
+
+## Usage
 
 ```bash
-jarvis start              # Start the daemon (background)
-jarvis start --test       # Text mode (stdin, no mic)
-jarvis stop               # Stop the daemon
-jarvis status             # Check daemon status
-jarvis text "open spotify"  # Send a text command
-jarvis calibrate          # Re-calibrate clap detection
-jarvis config             # Edit configuration
-jarvis log                # Tail today's conversation log
+jarvis start                  # Start daemon (background)
+jarvis start --headless       # No GUI, lower RAM (recommended for always-on)
+jarvis start --test           # Text mode (stdin, no mic)
+jarvis stop                   # Stop the daemon
+jarvis status                 # Check daemon status
+jarvis text "open spotify"    # Send a text command
+jarvis calibrate              # Re-calibrate clap detection
+jarvis config                 # Edit configuration
+jarvis log                    # Tail today's conversation log
+jarvis uninstall              # Remove auto-start
 ```
 
 ---
@@ -132,13 +154,25 @@ Config file: `~/.jarvis/config.yaml`
 ```yaml
 gemini_model: gemini-2.0-flash
 whisper_model_size: base.en    # tiny.en, small.en, medium.en
-tts_engine: macos_say          # macos_say, elevenlabs, pyttsx3
-tts_voice: Daniel
-tts_rate: 180
+tts_engine: pyttsx3            # macos_say, elevenlabs, pyttsx3
 clap_sensitivity: 0.7
 search_provider: google_cse    # google_cse, serpapi
 focus_check_interval_s: 30
+headless: false
 ```
+
+---
+
+## Uninstalling
+
+**Windows:** Run `Uninstall-Jarvis.ps1` or:
+```bash
+jarvis uninstall
+```
+
+This removes the Task Scheduler entry. To fully remove:
+- Delete `%LOCALAPPDATA%\JarvisAI` (the venv)
+- Delete `~/.jarvis` (config + logs)
 
 ---
 
@@ -154,6 +188,19 @@ python -m pytest tests/test_hands.py -v
 python -m pytest tests/test_brain.py -v
 python -m pytest tests/test_integration.py -v
 ```
+
+---
+
+## Creating a Release
+
+Push a version tag to trigger the GitHub Actions release workflow:
+
+```bash
+git tag v2.0.0
+git push origin v2.0.0
+```
+
+This creates a GitHub Release with a downloadable zip.
 
 ---
 

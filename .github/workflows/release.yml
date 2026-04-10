@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create release archive
+        run: |
+          zip -r "JarvisAI-${{ steps.version.outputs.version }}.zip" \
+            jarvis/ \
+            setup.bat \
+            Install-Jarvis.ps1 \
+            Uninstall-Jarvis.ps1 \
+            pyproject.toml \
+            install.py \
+            README.md \
+            VERSION \
+            CHANGELOG.md \
+            .gitignore \
+            -x "**/__pycache__/*" "**/*.pyc" "**/.env"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Jarvis AI v${{ steps.version.outputs.version }}
+          files: JarvisAI-*.zip
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            1. Download `JarvisAI-${{ steps.version.outputs.version }}.zip` below
+            2. Extract the zip
+            3. Double-click `setup.bat`
+            4. Follow the prompts (you'll need a [Gemini API key](https://ai.google.dev))
+
+            Jarvis will auto-start on login and run in the background.
+
+            ### Manual install (any OS)
+            ```bash
+            pip install .
+            jarvis install
+            jarvis start --headless
+            ```

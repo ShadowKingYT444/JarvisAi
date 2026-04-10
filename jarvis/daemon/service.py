@@ -1,4 +1,4 @@
-"""Jarvis main daemon service — persistent background process.
+"""Jarvis main daemon service -- persistent background process.
 
 Orchestrates all subsystems: clap detection, STT, brain, tools,
 TTS, and GUI. Entry point for both daemon and test modes.
@@ -7,7 +7,9 @@ TTS, and GUI. Entry point for both daemon and test modes.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -41,11 +43,16 @@ async def run_service(test_mode: bool = False, headless: bool = False) -> None:
     _setup_logging(config)
     logger.info("Jarvis v2.0 starting (test_mode=%s, headless=%s)", test_mode, headless)
 
-    # 3. Event bus + state manager
+    # 3. Write PID file
+    pid_path = Path(config.jarvis_home).expanduser() / "jarvis.pid"
+    pid_path.write_text(str(os.getpid()))
+    atexit.register(lambda: pid_path.unlink(missing_ok=True))
+
+    # 4. Event bus + state manager
     event_bus = EventBus()
     state_mgr = StateManager(event_bus=event_bus)
 
-    # 4. Brain + tools — lazy-loaded on first command to reduce idle RAM
+    # 5. Brain + tools -- lazy-loaded on first command to reduce idle RAM
     _brain = None
 
     async def _get_brain():
@@ -65,7 +72,7 @@ async def run_service(test_mode: bool = False, headless: bool = False) -> None:
             logger.info("Brain + tools loaded on first command")
         return _brain
 
-    # 5. TTS + speech queue
+    # 6. TTS + speech queue
     from jarvis.voice.tts_engine import TTSEngine
     from jarvis.voice.speech_queue import SpeechQueue
 
@@ -73,7 +80,7 @@ async def run_service(test_mode: bool = False, headless: bool = False) -> None:
     speech_queue = SpeechQueue(tts_engine=tts_engine, event_bus=event_bus)
     await speech_queue.start()
 
-    # 6. Process a single command
+    # 7. Process a single command
     async def process_command(text: str) -> str:
         """Run one command through the full pipeline."""
         if not text.strip():
@@ -125,7 +132,7 @@ async def _run_text_mode(
     """Text-only mode for testing (no mic, no GUI)."""
     from jarvis.shared.types import JarvisState
 
-    print("Jarvis v2.0 — Text Mode (type commands, Ctrl+C to quit)")
+    print("Jarvis v2.0 -- Text Mode (type commands, Ctrl+C to quit)")
     print("-" * 50)
 
     loop = asyncio.get_event_loop()
@@ -209,14 +216,14 @@ async def _run_full_mode(
         _run_ipc_server(config, process_command)
     )
 
-    # Try to set up GUI (optional — works without it)
+    # Try to set up GUI (optional -- works without it)
     if not headless:
         _try_setup_gui(event_bus, config)
     else:
-        logger.info("Headless mode — skipping GUI")
+        logger.info("Headless mode -- skipping GUI")
 
     # Start clap detection
-    logger.info("Starting clap detection — double-clap to activate")
+    logger.info("Starting clap detection -- double-clap to activate")
     clap_detector.calibrate()
     clap_detector.start()
     state_mgr.set_state(JarvisState.IDLE)
@@ -229,11 +236,21 @@ async def _run_full_mode(
         stop_event.set()
 
     loop = asyncio.get_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _handle_signal)
-        except NotImplementedError:
-            pass  # Windows
+
+    # Signal handling -- platform-aware
+    if sys.platform != "win32":
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _handle_signal)
+            except NotImplementedError:
+                pass
+    else:
+        # Windows: use ctrl handler via signal module
+        def _win_handler(signum, frame):
+            stop_event.set()
+
+        signal.signal(signal.SIGINT, _win_handler)
+        signal.signal(signal.SIGTERM, _win_handler)
 
     event_bus.on("quit_requested", lambda _: stop_event.set())
 
@@ -245,15 +262,17 @@ async def _run_full_mode(
     await speech_queue.stop()
     ipc_task.cancel()
 
+    # Clean up port file
+    port_file = Path(config.jarvis_home).expanduser() / "jarvis.port"
+    port_file.unlink(missing_ok=True)
+
 
 async def _run_ipc_server(config, process_command) -> None:
-    """Unix domain socket server for CLI ↔ daemon communication."""
-    socket_path = Path(config.jarvis_home).expanduser() / "jarvis.sock"
-    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    """TCP localhost server for CLI <-> daemon communication."""
+    port_file = Path(config.jarvis_home).expanduser() / "jarvis.port"
+    port_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Clean up stale socket
-    if socket_path.exists():
-        socket_path.unlink()
+    stop_requested = asyncio.Event()
 
     async def handle_client(reader, writer):
         try:
@@ -264,7 +283,7 @@ async def _run_ipc_server(config, process_command) -> None:
                 response = "running"
             elif text == "__stop__":
                 response = "stopping"
-                # Will be handled by the main loop
+                stop_requested.set()
             else:
                 response = await process_command(text)
 
@@ -277,17 +296,33 @@ async def _run_ipc_server(config, process_command) -> None:
             await writer.wait_closed()
 
     try:
-        server = await asyncio.start_unix_server(
-            handle_client, path=str(socket_path)
+        server = await asyncio.start_server(
+            handle_client, "127.0.0.1", 0
         )
-        logger.info("IPC server listening on %s", socket_path)
+        # Write the assigned port so the CLI can find us
+        port = server.sockets[0].getsockname()[1]
+        port_file.write_text(str(port))
+        logger.info("IPC server listening on 127.0.0.1:%d", port)
+
         async with server:
-            await server.serve_forever()
+            # Wait for either server to be cancelled or stop requested
+            stop_task = asyncio.create_task(stop_requested.wait())
+            serve_task = asyncio.create_task(server.serve_forever())
+            done, pending = await asyncio.wait(
+                [stop_task, serve_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            if stop_requested.is_set():
+                # Raise KeyboardInterrupt to trigger main loop shutdown
+                raise KeyboardInterrupt("Stop requested via IPC")
     except asyncio.CancelledError:
         pass
+    except KeyboardInterrupt:
+        raise
     finally:
-        if socket_path.exists():
-            socket_path.unlink()
+        port_file.unlink(missing_ok=True)
 
 
 def _try_setup_gui(event_bus, config) -> None:
@@ -297,8 +332,8 @@ def _try_setup_gui(event_bus, config) -> None:
 
         app = QApplication.instance()
         if app is None:
-            # No Qt event loop — skip GUI
-            logger.info("No QApplication — GUI disabled (use daemon mode for GUI)")
+            # No Qt event loop -- skip GUI
+            logger.info("No QApplication -- GUI disabled (use daemon mode for GUI)")
             return
 
         from jarvis.face.tray import SystemTray
@@ -312,9 +347,9 @@ def _try_setup_gui(event_bus, config) -> None:
 
         logger.info("GUI components initialized")
     except ImportError:
-        logger.info("PyQt6 not available — running headless")
+        logger.info("PyQt6 not available -- running headless")
     except Exception:
-        logger.exception("GUI setup failed — running headless")
+        logger.exception("GUI setup failed -- running headless")
 
 
 def _setup_logging(config) -> None:

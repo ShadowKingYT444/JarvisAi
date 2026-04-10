@@ -1,54 +1,79 @@
 #!/usr/bin/env python3
-"""Jarvis AI one-click installer.
+"""Jarvis AI cross-platform installer.
 
 Usage:
-    python install.py          # GUI installer wizard
-    python install.py --cli    # CLI-only installer
+    python install.py          # Auto-detect platform and install
+    python install.py --cli    # CLI-only installer (no GUI)
 """
+import os
 import subprocess
 import sys
-import os
+from pathlib import Path
+
 
 def main():
-    # Ensure we're in the right directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = Path(__file__).parent.resolve()
     os.chdir(script_dir)
+
+    print("=" * 50)
+    print("  Jarvis AI Installer")
+    print("=" * 50)
+    print()
 
     # Check Python version
     if sys.version_info < (3, 11):
-        print(f"Warning: Python 3.11+ recommended (you have {sys.version})")
-        print("Continuing anyway...")
-
-    # Install dependencies
-    print("Installing dependencies...")
-    req_file = os.path.join(script_dir, "jarvis", "requirements.txt")
-    if os.path.exists(req_file):
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", req_file])
-    else:
-        print(f"Error: {req_file} not found")
+        print(f"ERROR: Python 3.11+ required (you have {sys.version})")
+        print("Download from: https://python.org/downloads")
         sys.exit(1)
 
-    print("\nDependencies installed successfully!")
+    # On Windows, delegate to PowerShell installer for best experience
+    if sys.platform == "win32" and "--cli" not in sys.argv:
+        ps_script = script_dir / "Install-Jarvis.ps1"
+        if ps_script.exists():
+            print("Launching Windows installer...")
+            result = subprocess.run(
+                ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(ps_script)],
+            )
+            sys.exit(result.returncode)
+        # Fall through to Python-based install if PS1 not found
+
+    # Python-based install (macOS/Linux or --cli)
+    print("Installing Jarvis AI package...")
     print()
 
-    # Launch installer
+    # Install the package (creates the 'jarvis' CLI command)
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", str(script_dir)],
+    )
+    if result.returncode != 0:
+        print()
+        print("ERROR: Package installation failed.")
+        print("Try: pip install .")
+        sys.exit(1)
+
+    print()
+    print("Package installed successfully!")
+    print()
+
+    # Run the setup wizard
     if "--cli" in sys.argv:
         print("Running CLI installer...")
         from jarvis.daemon.installer import install
         install()
     else:
-        print("Launching GUI installer wizard...")
+        print("Launching setup wizard...")
         try:
             from jarvis.face.installer_wizard import install_gui
             install_gui()
         except ImportError:
-            print("PyQt6 not available. Falling back to CLI installer.")
+            print("PyQt6 not available. Running CLI installer.")
             from jarvis.daemon.installer import install
             install()
 
     print()
     print("Installation complete!")
-    print("Run 'jarvis start' or 'python -m jarvis.daemon.cli start' to begin.")
+    print("Run 'jarvis start' to begin, or 'jarvis start --headless' for background mode.")
+
 
 if __name__ == "__main__":
     main()
