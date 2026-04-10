@@ -26,3 +26,13 @@ Thumbs.db
 # PyInstaller
 build/
 dist/
+
+# Jarvis runtime
+~/.jarvis/
+*.sock
+jarvis.pid
+temp_speech.mp3
+
+# Eggs
+*.egg-info/
+*.egg
