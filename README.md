@@ -1,101 +1,168 @@
-# 🤖 JARVIS: The AI Flow State Guardian
+# Jarvis AI Desktop Assistant v2.0
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3.10%2B-yellow.svg)
-![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
+![Python](https://img.shields.io/badge/python-3.11%2B-yellow.svg)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 ![Powered By](https://img.shields.io/badge/Powered%20By-Gemini%202.0%20Flash-orange.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-> **"Your voice-controlled co-pilot for deep work."**
+> **Always-on, tool-using AI assistant activated by double-clap detection.**
 
-Jarvis is a desktop AI agent designed to protect your focus. Unlike standard voice assistants that just answer questions, **Jarvis actively enforces your productivity**. It manages your browser, filters distractions, and executes tasks via voice—so you never have to leave your keyboard or break your flow.
-
----
-
-## Key Features
-
-*   **Active Distraction Defense**
-    *   Jarvis watches your browser 24/7.
-    *   If you open a distraction (e.g., YouTube, Reddit) during "Focus Mode," Jarvis issues a **3-second warning** and then **mercilessly closes the tab**.
-*   **Near-Zero Latency Control**
-    *   Powered by **Faster-Whisper** (local Int8 quantization) for instant transcription.
-    *   Uses **Google Gemini 2.0 Flash** for ultra-fast intent understanding.
-*   **Hands-Free Browser Management**
-    *   *"Jarvis, close all social media tabs."*
-    *   *"Jarvis, switch to GitHub."*
-    *   *"Jarvis, restore my last session."*
-*   **Native macOS Integration**
-    *   Uses **AppleScript** for deep browser integration (Chrome & Safari).
-    *   **PyQt6 Overlay**: A futuristic, non-intrusive "Blue Wave" HUD that appears only when you speak.
+Jarvis is a persistent desktop AI agent that listens for a double-clap, takes voice commands, executes actions on your computer, and speaks results back. It uses Gemini 2.0 Flash with native function calling to search the web, control your browser, open apps, manage focus sessions, and more.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
-Jarvis isn't just a wrapper; it's a multi-threaded system designed for speed.
+```
+JARVIS DAEMON (always-on)
 
-1.  **Ears (Wake Word):** Uses `PvPorcupine` to listen for "Jarvis" efficiently on a background thread.
-2.  **Brain (STT & LLM):** 
-    *   Audio is transcribed locally using `faster-whisper` (Privacy + Speed).
-    *   Text is sent to **Gemini 2.0 Flash**, which parses natural language into JSON actions (e.g., `{"action": "close", "target": "youtube"}`).
-3.  **Hands (Automation):** The `AppleScriptBrowserControl` module interfaces directly with the macOS WindowServer to manipulate tabs and windows without flaky DOM selectors.
-4.  **Face (UI):** A transparent `PyQt6` overlay that renders visual feedback on top of your workflow without stealing input focus.
+  ACTIVATION ──> EARS ──> BRAIN ──> HANDS (tools)
+  (clap detect)  (STT)    (Gemini)   |
+                                      ├── web_search
+       VOICE <──────────────────────  ├── open_browser_tabs
+       (TTS)                          ├── open_application
+                                      ├── close_browser_tab
+       FACE <───────────────────────  ├── system_command
+       (tray + HUD)                   ├── focus_mode
+                                      ├── clipboard
+                                      └── set_reminder
+```
+
+| Layer | Technology |
+|-------|-----------|
+| Language | Python 3.11+ |
+| LLM | Google Gemini 2.0 Flash (native function calling) |
+| STT | Faster-Whisper (local, private) |
+| TTS | macOS `say` / ElevenLabs / pyttsx3 |
+| Activation | Custom double-clap detector (sounddevice + scipy) |
+| GUI | PyQt6 system tray + floating HUD |
+| Browser Control | AppleScript (macOS) / PowerShell (Windows) |
+| Daemon | launchd (macOS) / systemd (Linux) / Task Scheduler (Windows) |
 
 ---
 
-## 🚀Getting Started
+## Getting Started
 
 ### Prerequisites
-*   macOS (Optimized for AppleScript automation)
-*   Python 3.10+
-*   Google Chrome or Safari
+- Python 3.11+
+- macOS, Windows, or Linux
+- Google Chrome or Safari (for browser control)
 
 ### Installation
 
-1.  **Clone the Repository**
-    ```bash
-    git clone https://github.com/ShadowKingYT444/JarvisAi.git
-    cd JarvisAi
-    ```
+```bash
+git clone https://github.com/ShadowKingYT444/JarvisAi.git
+cd JarvisAi
 
-2.  **Install Dependencies**
-    ```bash
-    pip install -r requirements.txt
-    ```
+# Install dependencies
+pip install -r jarvis/requirements.txt
 
-3.  **Set up Environment Variables**
-    Create a `.env` file in the root directory:
-    ```env
-    GOOGLE_API_KEY=your_gemini_api_key
-    PICOVOICE_ACCESS_KEY=your_porcupine_key
-    ```
+# Run the installer (creates ~/.jarvis, config, and auto-start)
+jarvis install
+```
 
-4.  **Run Jarvis**
-    ```bash
-    python main.py
-    ```
+### API Keys
+
+Edit `~/.jarvis/.env` with your keys:
+```env
+GOOGLE_API_KEY=your_gemini_api_key
+SEARCH_API_KEY=your_google_cse_or_serpapi_key
+SEARCH_ENGINE_ID=your_google_cse_id
+# ELEVENLABS_API_KEY=optional_premium_tts
+```
+
+### Usage
+
+```bash
+jarvis start              # Start the daemon (background)
+jarvis start --test       # Text mode (stdin, no mic)
+jarvis stop               # Stop the daemon
+jarvis status             # Check daemon status
+jarvis text "open spotify"  # Send a text command
+jarvis calibrate          # Re-calibrate clap detection
+jarvis config             # Edit configuration
+jarvis log                # Tail today's conversation log
+```
 
 ---
 
-## Command Guide
+## How It Works
 
-| Intent | Example Voice Command | Action |
-| :--- | :--- | :--- |
-| **Focus** | "Focus on writing code" | Enables Monitor. Blocks distractions. |
-| **Navigation** | "Go to Gmail" | Switches to existing tab or opens new one. |
-| **Cleanup** | "Close all social media" | Identifies and closes specific tabs. |
-| **Break** | "Take a break" | Disables monitoring temporarily. |
-| **Rescue** | "Restore my tabs" | Re-opens tabs Jarvis closed recently. |
+1. **Double-clap** activates Jarvis (replaces wake word for privacy)
+2. **Faster-Whisper** transcribes your voice command locally
+3. **Gemini 2.0 Flash** decides which tools to call via function calling
+4. **Tools execute**: search the web, open tabs/apps, control system
+5. **Jarvis speaks** a concise summary and opens sources in your browser
+
+### Example Commands
+
+| Command | What Happens |
+|---------|-------------|
+| "What's going on in the world?" | Searches news, opens top 3 tabs, speaks summary |
+| "Open Spotify" | Launches Spotify via system command |
+| "Focus on writing my essay" | Starts focus mode, monitors/closes distracting tabs |
+| "Set a reminder in 30 minutes to stretch" | Sets timed reminder with TTS alert |
+| "Take a screenshot" | Captures screen to Desktop |
+| "Read my clipboard" | Reads clipboard contents aloud |
+
+---
+
+## Project Structure
+
+```
+jarvis/
+├── shared/          # Shared types, events, config
+├── activation/      # Double-clap detection + mic manager
+├── ears/            # Speech-to-text (faster-whisper)
+├── brain/           # Gemini orchestrator + tool definitions
+├── hands/           # Tool executor + platform abstraction
+│   └── tools/       # web_search, browser, apps, focus_mode, etc.
+├── voice/           # TTS engine + speech queue
+├── face/            # System tray + overlay HUD
+├── daemon/          # Background service + CLI + installer
+└── tests/           # Unit + integration tests
+```
+
+---
+
+## Configuration
+
+Config file: `~/.jarvis/config.yaml`
+
+```yaml
+gemini_model: gemini-2.0-flash
+whisper_model_size: base.en    # tiny.en, small.en, medium.en
+tts_engine: macos_say          # macos_say, elevenlabs, pyttsx3
+tts_voice: Daniel
+tts_rate: 180
+clap_sensitivity: 0.7
+search_provider: google_cse    # google_cse, serpapi
+focus_check_interval_s: 30
+```
+
+---
+
+## Testing
+
+```bash
+# Run all tests
+cd jarvis && python -m pytest tests/ -v
+
+# Run specific test suites
+python -m pytest tests/test_activation.py -v
+python -m pytest tests/test_hands.py -v
+python -m pytest tests/test_brain.py -v
+python -m pytest tests/test_integration.py -v
+```
 
 ---
 
 ## Tech Stack
 
-*   **Core Logic:** Python
-*   **AI Model:** Google Gemini 2.0 Flash
-*   **Speech-to-Text:** Faster-Whisper (Local)
-*   **Wake Word:** Picovoice Porcupine
-*   **GUI:** PyQt6
-*   **Automation:** AppleScript (osascript)
-
----
-
+- **LLM**: Google Gemini 2.0 Flash (function calling)
+- **STT**: Faster-Whisper (local, int8 quantization)
+- **TTS**: macOS say / ElevenLabs / pyttsx3
+- **Audio**: sounddevice, scipy, webrtcvad
+- **GUI**: PyQt6 + qasync
+- **Search**: Google Custom Search / SerpAPI
+- **Daemon**: launchd / systemd / Task Scheduler

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "jarvis-ai"
+version = "2.0.0"
+description = "Jarvis — always-on, tool-using desktop AI assistant activated by double-clap detection"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    "google-generativeai>=0.8.0",
+    "faster-whisper>=1.0.0",
+    "sounddevice>=0.4.6",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "pyttsx3>=2.90",
+    "PyQt6>=6.6.0",
+    "qasync>=0.27.0",
+    "pyperclip>=1.8.0",
+    "google-api-python-client>=2.100.0",
+    "webrtcvad>=2.0.10",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+    "aiofiles>=23.0.0",
+]
+
+[project.optional-dependencies]
+elevenlabs = ["elevenlabs>=1.0.0"]
+serpapi = ["google-search-results>=2.4.2"]
+
+[project.scripts]
+jarvis = "jarvis.daemon.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["jarvis/tests"]
+asyncio_mode = "auto"

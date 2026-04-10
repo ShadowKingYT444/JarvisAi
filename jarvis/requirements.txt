@@ -1,0 +1,31 @@
+# Core
+google-generativeai>=0.8.0
+faster-whisper>=1.0.0
+sounddevice>=0.4.6
+numpy>=1.24.0
+scipy>=1.11.0
+
+# TTS
+pyttsx3>=2.90
+# elevenlabs>=1.0.0  # optional premium TTS
+
+# GUI
+PyQt6>=6.6.0
+qasync>=0.27.0
+
+# Tools
+pyperclip>=1.8.0
+google-api-python-client>=2.100.0  # Google CSE
+# google-search-results>=2.4.2     # SerpAPI (alternative)
+
+# Audio
+webrtcvad>=2.0.10
+
+# Util
+python-dotenv>=1.0.0
+pyyaml>=6.0
+aiofiles>=23.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
