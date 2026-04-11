@@ -76,9 +76,20 @@ def _is_daemon_running() -> bool:
 
     try:
         pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)  # signal 0 = check if process exists
-        return True
-    except (ValueError, OSError):
+        if sys.platform == "win32":
+            # os.kill(pid, 0) is unreliable on Windows — use tasklist
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if str(pid) not in result.stdout:
+                pid_file.unlink(missing_ok=True)
+                return False
+            return True
+        else:
+            os.kill(pid, 0)
+            return True
+    except (ValueError, OSError, subprocess.TimeoutExpired):
         pid_file.unlink(missing_ok=True)
         return False
 
@@ -96,12 +107,24 @@ def cmd_start(args):
     cmd = [python, str(service_path)]
     if getattr(args, "headless", False):
         cmd.append("--headless")
+    if getattr(args, "verbose", False):
+        cmd.append("--verbose")
+
     if getattr(args, "test", False):
         cmd.append("--test")
         # In test mode, run in foreground
         os.execvp(python, cmd)
+    elif getattr(args, "verbose", False):
+        # Verbose mode: run in foreground with full console output
+        print("Starting Jarvis in verbose mode (foreground)...")
+        print("Press Ctrl+C to stop.\n")
+        try:
+            proc = subprocess.run(cmd)
+            sys.exit(proc.returncode)
+        except KeyboardInterrupt:
+            print("\nJarvis stopped.")
     else:
-        # Daemonize
+        # Daemonize (background mode)
         pid_file = _get_pid_file()
         pid_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -127,6 +150,55 @@ def cmd_start(args):
         pid_file.write_text(str(proc.pid))
         print(f"Jarvis started (PID {proc.pid})")
 
+        # Health check: wait for IPC port file to confirm startup
+        port_file = _get_port_file()
+        print("Waiting for Jarvis to initialize...", end="", flush=True)
+        for _ in range(20):  # wait up to 10 seconds
+            time.sleep(0.5)
+            if port_file.exists():
+                print(" ready!")
+                return
+            # Check if process died
+            if sys.platform == "win32":
+                result = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {proc.pid}", "/NH"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if str(proc.pid) not in result.stdout:
+                    print(" FAILED")
+                    print("Jarvis process exited. Run 'jarvis start --verbose' to see errors.")
+                    pid_file.unlink(missing_ok=True)
+                    return
+            else:
+                if proc.poll() is not None:
+                    print(" FAILED")
+                    print("Jarvis process exited. Run 'jarvis start --verbose' to see errors.")
+                    pid_file.unlink(missing_ok=True)
+                    return
+        print(" timeout (may still be loading)")
+
+
+def cmd_devices(args):
+    """List available audio input devices."""
+    try:
+        import sounddevice
+        devices = sounddevice.query_devices()
+        default_in = sounddevice.default.device[0]
+
+        print("Available audio input devices:")
+        print("-" * 50)
+        for i, d in enumerate(devices):
+            if d['max_input_channels'] > 0:
+                marker = " ← DEFAULT" if i == default_in else ""
+                print(f"  [{i}] {d['name']} ({d['max_input_channels']} ch, {int(d['default_samplerate'])} Hz){marker}")
+        print()
+        print("To use a specific device, add to ~/.jarvis/config.yaml:")
+        print("  audio_input_device: <number>")
+    except ImportError:
+        print("sounddevice not installed. Run: pip install sounddevice")
+    except Exception as e:
+        print(f"Error listing devices: {e}")
+
 
 def cmd_stop(args):
     """Stop the Jarvis daemon."""
@@ -143,11 +215,9 @@ def cmd_stop(args):
         try:
             pid = int(pid_file.read_text().strip())
             for _ in range(30):  # wait up to 3 seconds
-                try:
-                    os.kill(pid, 0)
-                    time.sleep(0.1)
-                except OSError:
+                if not _is_daemon_running():
                     break
+                time.sleep(0.1)
         except (ValueError, OSError):
             pass
     else:
@@ -297,6 +367,7 @@ def main():
     start_parser = subparsers.add_parser("start", help="Start Jarvis daemon")
     start_parser.add_argument("--test", "--text", action="store_true", help="Text mode")
     start_parser.add_argument("--headless", action="store_true", help="No GUI (lower RAM)")
+    start_parser.add_argument("--verbose", "-v", action="store_true", help="Run in foreground with full output")
     start_parser.set_defaults(func=cmd_start)
 
     # stop
@@ -341,6 +412,10 @@ def main():
     # calibrate
     calibrate_parser = subparsers.add_parser("calibrate", help="Calibrate clap detection")
     calibrate_parser.set_defaults(func=cmd_calibrate)
+
+    # devices
+    devices_parser = subparsers.add_parser("devices", help="List audio input devices")
+    devices_parser.set_defaults(func=cmd_devices)
 
     args = parser.parse_args()
 

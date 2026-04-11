@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import datetime
 import logging
 import os
 import signal
@@ -72,15 +73,33 @@ async def run_service(test_mode: bool = False, headless: bool = False) -> None:
             logger.info("Brain + tools loaded on first command")
         return _brain
 
-    # 6. TTS + speech queue
+    # 6. Log audio devices
+    try:
+        import sounddevice
+        devices = sounddevice.query_devices()
+        default_in = sounddevice.default.device[0]
+        logger.info("Audio devices detected:")
+        for i, d in enumerate(devices):
+            if d['max_input_channels'] > 0:
+                marker = " [DEFAULT]" if i == default_in else ""
+                logger.info("  [%d] %s (%d ch)%s", i, d['name'], d['max_input_channels'], marker)
+        selected = config.audio_input_device if config.audio_input_device is not None else default_in
+        logger.info("Using audio input device: [%d] %s", selected, devices[selected]['name'])
+        print(f"  [OK] Audio device: {devices[selected]['name']}")
+    except Exception:
+        logger.exception("Failed to enumerate audio devices")
+        print("  [!!] Audio device enumeration failed")
+
+    # 7. TTS + speech queue
     from jarvis.voice.tts_engine import TTSEngine
     from jarvis.voice.speech_queue import SpeechQueue
 
     tts_engine = TTSEngine(config=config)
     speech_queue = SpeechQueue(tts_engine=tts_engine, event_bus=event_bus)
     await speech_queue.start()
+    print(f"  [OK] TTS engine: {tts_engine.backend_name}")
 
-    # 7. Process a single command
+    # 8. Process a single command
     async def process_command(text: str) -> str:
         """Run one command through the full pipeline."""
         if not text.strip():
@@ -172,8 +191,10 @@ async def _run_full_mode(
     from jarvis.activation.clap_detector import ClapDetector
     from jarvis.ears.stt_engine import STTEngine
 
+    device_idx = config.audio_input_device
+
     # Mic manager
-    mic_manager = MicManager(sample_rate=16000)
+    mic_manager = MicManager(sample_rate=16000, device_index=device_idx)
 
     # STT
     stt_engine = STTEngine(
@@ -183,14 +204,25 @@ async def _run_full_mode(
         config=config,
     )
 
-    # Command cycle triggered by clap
+    # Clap detector
+    clap_detector = ClapDetector(
+        on_clap=lambda: None,  # replaced below
+        sensitivity=config.clap_sensitivity,
+        device_index=device_idx,
+    )
+
+    # Command cycle triggered by activation (clap, wake word, or hotkey)
     processing_lock = asyncio.Lock()
 
-    async def on_clap_async():
+    async def on_activate_async():
         if processing_lock.locked():
             return  # already processing a command
 
         async with processing_lock:
+            # Stop all audio-based detectors to release mic before STT
+            clap_detector.stop()
+            if wake_word_detector is not None:
+                wake_word_detector.stop()
             state_mgr.set_state(JarvisState.LISTENING)
             try:
                 result = await stt_engine.listen()
@@ -201,15 +233,21 @@ async def _run_full_mode(
             except Exception:
                 logger.exception("Error in command cycle")
                 state_mgr.set_state(JarvisState.IDLE)
+            finally:
+                # Resume audio-based detectors after STT completes
+                if "clap" in config.activation_methods:
+                    clap_detector.start()
+                if wake_word_detector is not None and "wake_word" in config.activation_methods:
+                    try:
+                        wake_word_detector.start()
+                    except Exception:
+                        logger.exception("Failed to restart wake word detector")
 
-    def on_clap():
-        asyncio.ensure_future(on_clap_async())
+    def on_activate():
+        asyncio.ensure_future(on_activate_async())
 
-    # Clap detector
-    clap_detector = ClapDetector(
-        on_clap=on_clap,
-        sensitivity=config.clap_sensitivity,
-    )
+    # Wire up the clap callback
+    clap_detector._on_clap = on_activate
 
     # Start IPC listener
     ipc_task = asyncio.create_task(
@@ -223,10 +261,62 @@ async def _run_full_mode(
         logger.info("Headless mode -- skipping GUI")
 
     # Start clap detection
-    logger.info("Starting clap detection -- double-clap to activate")
-    clap_detector.calibrate()
-    clap_detector.start()
+    if "clap" in config.activation_methods:
+        logger.info("Starting clap detection -- double-clap to activate")
+        print("  [OK] Clap detection enabled (sensitivity=%.1f)" % config.clap_sensitivity)
+        clap_detector.calibrate()
+        clap_detector.start()
+    else:
+        print("  [--] Clap detection disabled")
+
+    # Start wake word detection (if configured)
+    wake_word_detector = None
+    if "wake_word" in config.activation_methods:
+        try:
+            from jarvis.activation.wake_word import WakeWordDetector
+            wake_word_detector = WakeWordDetector(
+                on_wake_word=on_activate,
+                access_key=config.porcupine_access_key,
+                keyword=config.wake_word_keyword,
+                device_index=device_idx,
+            )
+            wake_word_detector.start()
+            print(f'  [OK] Wake word "{config.wake_word_keyword}" enabled')
+            logger.info("Wake word detection started (keyword=%s)", config.wake_word_keyword)
+        except Exception:
+            logger.exception("Wake word detection failed to start")
+            print('  [!!] Wake word detection failed (missing porcupine key?)')
+
+    # Start hotkey detection (if configured)
+    hotkey_listener = None
+    if "hotkey" in config.activation_methods:
+        try:
+            from jarvis.activation.hotkey import HotkeyListener
+            hotkey_listener = HotkeyListener(
+                on_hotkey=on_activate,
+                hotkey=config.hotkey,
+            )
+            hotkey_listener.start()
+            print(f"  [OK] Hotkey {config.hotkey} enabled")
+            logger.info("Hotkey listener started (%s)", config.hotkey)
+        except Exception:
+            logger.exception("Hotkey listener failed to start")
+            print("  [!!] Hotkey listener failed")
+
     state_mgr.set_state(JarvisState.IDLE)
+
+    # Boot greeting
+    hour = datetime.datetime.now().hour
+    if hour < 12:
+        greeting = "Good morning sir."
+    elif hour < 17:
+        greeting = "Good afternoon sir."
+    else:
+        greeting = "Good evening sir."
+    boot_msg = f"{greeting} Jarvis online. All systems operational."
+    logger.info("Boot greeting: %s", boot_msg)
+    print(f"\n  {boot_msg}\n")
+    await speech_queue.say(boot_msg)
 
     # Keep running
     stop_event = asyncio.Event()
@@ -259,6 +349,10 @@ async def _run_full_mode(
     # Cleanup
     logger.info("Shutting down...")
     clap_detector.stop()
+    if wake_word_detector is not None:
+        wake_word_detector.stop()
+    if hotkey_listener is not None:
+        hotkey_listener.stop()
     await speech_queue.stop()
     ipc_task.cancel()
 
@@ -383,9 +477,42 @@ def main():
         action="store_true",
         help="Skip GUI initialization to reduce RAM usage",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Run in foreground with full console output",
+    )
     args = parser.parse_args()
 
-    asyncio.run(run_service(test_mode=args.test_mode, headless=args.headless))
+    use_gui = not args.test_mode and not args.headless
+
+    if use_gui:
+        # Set DPI awareness on Windows before creating QApplication
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                pass
+
+        try:
+            from PyQt6.QtWidgets import QApplication
+            import qasync
+
+            app = QApplication(sys.argv)
+            app.setQuitOnLastWindowClosed(False)  # keep running as tray app
+            loop = qasync.QEventLoop(app)
+            asyncio.set_event_loop(loop)
+
+            with loop:
+                loop.run_until_complete(
+                    run_service(test_mode=False, headless=False)
+                )
+        except ImportError:
+            logger.warning("PyQt6/qasync not available — falling back to headless")
+            asyncio.run(run_service(test_mode=args.test_mode, headless=True))
+    else:
+        asyncio.run(run_service(test_mode=args.test_mode, headless=args.headless))
 
 
 if __name__ == "__main__":

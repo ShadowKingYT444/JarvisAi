@@ -46,12 +46,18 @@ class ClapDetector:
         Default 0.7.
     """
 
-    def __init__(self, on_clap: Callable[[], None], sensitivity: float = 0.7) -> None:
+    def __init__(
+        self,
+        on_clap: Callable[[], None],
+        sensitivity: float = 0.7,
+        device_index: int | None = None,
+    ) -> None:
         if not 0.0 <= sensitivity <= 1.0:
             raise ValueError("sensitivity must be in [0.0, 1.0]")
 
         self._on_clap = on_clap
         self._sensitivity = sensitivity
+        self._device_index = device_index
 
         # Threshold state
         self._ambient_energy: float = 0.0
@@ -98,6 +104,7 @@ class ClapDetector:
                 dtype="float32",
                 blocksize=BLOCK_SIZE,
                 callback=self._audio_callback,
+                device=self._device_index,
             )
             self._stream.start()
             logger.info("ClapDetector started (sensitivity=%.2f)", self._sensitivity)
@@ -142,6 +149,7 @@ class ClapDetector:
             dtype="float32",
             blocksize=BLOCK_SIZE,
             callback=_cal_callback,
+            device=self._device_index,
         )
         stream.start()
 
@@ -185,10 +193,10 @@ class ClapDetector:
 
         # Threshold: scale above ambient.  Higher sensitivity → lower
         # multiplier (easier to trigger).
-        #   sensitivity 1.0 → multiplier  3
-        #   sensitivity 0.5 → multiplier 10
-        #   sensitivity 0.0 → multiplier 20
-        multiplier = 3.0 + (1.0 - self._sensitivity) * 17.0
+        #   sensitivity 1.0 → multiplier  2
+        #   sensitivity 0.5 → multiplier  7
+        #   sensitivity 0.0 → multiplier 12
+        multiplier = 2.0 + (1.0 - self._sensitivity) * 10.0
         self._threshold = max(self._ambient_energy * multiplier, 1e-5)
         self._calibrated.set()
 

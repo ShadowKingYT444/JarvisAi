@@ -18,14 +18,14 @@ class JarvisConfig:
     whisper_model_size: str = "base.en"
 
     # TTS
-    tts_engine: str = "macos_say"  # "macos_say" | "elevenlabs" | "pyttsx3"
+    tts_engine: str = "auto"  # "auto" | "macos_say" | "elevenlabs" | "pyttsx3"
     tts_voice: str = "Daniel"
     tts_rate: int = 180
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
 
     # Search
-    search_provider: str = "google_cse"  # "google_cse" | "serpapi"
+    search_provider: str = "auto"  # "auto" | "google_cse" | "serpapi"
     search_api_key: str = ""
     search_engine_id: str = ""
 
@@ -34,6 +34,11 @@ class JarvisConfig:
     clap_timeout_ms: int = 600
     listen_timeout_s: int = 5
     max_record_s: int = 15
+    audio_input_device: int | None = None  # None = system default
+    activation_methods: list[str] = field(default_factory=lambda: ["clap", "hotkey"])
+    wake_word_keyword: str = "jarvis"
+    porcupine_access_key: str = ""
+    hotkey: str = "ctrl+shift+j"
 
     # Focus Mode
     focus_check_interval_s: int = 30
@@ -91,6 +96,7 @@ class JarvisConfig:
         config_data.setdefault("search_api_key", os.getenv("SEARCH_API_KEY", ""))
         config_data.setdefault("search_engine_id", os.getenv("SEARCH_ENGINE_ID", ""))
         config_data.setdefault("elevenlabs_api_key", os.getenv("ELEVENLABS_API_KEY", ""))
+        config_data.setdefault("porcupine_access_key", os.getenv("PORCUPINE_ACCESS_KEY", ""))
 
         # Build config, ignoring unknown keys
         valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
@@ -105,7 +111,7 @@ class JarvisConfig:
         from dataclasses import asdict
         data = asdict(self)
         # Don't persist secrets to YAML
-        for secret_key in ("gemini_api_key", "search_api_key", "elevenlabs_api_key"):
+        for secret_key in ("gemini_api_key", "search_api_key", "elevenlabs_api_key", "porcupine_access_key"):
             data.pop(secret_key, None)
 
         with open(expanded, "w") as f:
@@ -119,11 +125,15 @@ class JarvisConfig:
         lines = [
             "# Jarvis API Keys",
             f"GOOGLE_API_KEY={self.gemini_api_key}",
-            f"SEARCH_API_KEY={self.search_api_key}",
-            f"SEARCH_ENGINE_ID={self.search_engine_id}",
         ]
+        if self.search_api_key:
+            lines.append(f"SEARCH_API_KEY={self.search_api_key}")
+        if self.search_engine_id:
+            lines.append(f"SEARCH_ENGINE_ID={self.search_engine_id}")
         if self.elevenlabs_api_key:
             lines.append(f"ELEVENLABS_API_KEY={self.elevenlabs_api_key}")
+        if self.porcupine_access_key:
+            lines.append(f"PORCUPINE_ACCESS_KEY={self.porcupine_access_key}")
 
         expanded.write_text("\n".join(lines) + "\n")
         try:

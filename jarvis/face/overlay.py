@@ -1,12 +1,14 @@
-"""Minimal floating HUD overlay for Jarvis status and transcription.
+"""Floating HUD overlay with animated arc reactor for Jarvis.
 
-A frameless, translucent, always-on-top pill widget that appears at the
-bottom-center of the screen on activation and auto-hides after speech.
+A frameless, translucent, always-on-top widget that shows an animated
+arc reactor orb and status text. Appears at the bottom-right of the
+screen and auto-hides when idle.
 """
 
 from __future__ import annotations
 
 import logging
+import sys
 
 from jarvis.shared.events import EventBus
 from jarvis.shared.types import JarvisState
@@ -14,11 +16,21 @@ from jarvis.shared.types import JarvisState
 logger = logging.getLogger(__name__)
 
 # Auto-hide delay in ms after speech ends
-_AUTOHIDE_DELAY_MS = 2000
+_AUTOHIDE_DELAY_MS = 4000
+
+# State name mapping for the arc reactor
+_STATE_NAMES = {
+    JarvisState.IDLE: "idle",
+    JarvisState.LISTENING: "listening",
+    JarvisState.PROCESSING: "processing",
+    JarvisState.SPEAKING: "speaking",
+    JarvisState.ERROR: "error",
+    JarvisState.FOCUS_MODE: "focus_mode",
+}
 
 
 class OverlayHUD:
-    """Floating HUD overlay that shows Jarvis status and transcription.
+    """Floating HUD overlay with arc reactor and status text.
 
     Parameters
     ----------
@@ -29,6 +41,7 @@ class OverlayHUD:
     def __init__(self, event_bus: EventBus | None = None) -> None:
         self._event_bus = event_bus or EventBus()
         self._widget = None
+        self._arc_reactor = None
         self._label = None
         self._hide_timer = None
         self._current_state = JarvisState.IDLE
@@ -43,8 +56,8 @@ class OverlayHUD:
         """Create the overlay widget. Must be called after QApplication init."""
         try:
             from PyQt6.QtCore import QTimer, Qt
-            from PyQt6.QtGui import QColor, QFont
-            from PyQt6.QtWidgets import QApplication, QLabel, QWidget
+            from PyQt6.QtGui import QFont
+            from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
             screen = QApplication.primaryScreen()
             if screen is None:
@@ -53,38 +66,54 @@ class OverlayHUD:
 
             screen_geom = screen.geometry()
 
-            # Pill-shaped container
+            # Main container
             self._widget = QWidget()
             self._widget.setWindowFlags(
                 Qt.WindowType.FramelessWindowHint
                 | Qt.WindowType.WindowStaysOnTopHint
-                | Qt.WindowType.Tool  # doesn't appear in taskbar
+                | Qt.WindowType.Tool
             )
             self._widget.setAttribute(
                 Qt.WidgetAttribute.WA_TranslucentBackground
             )
-            self._widget.setFixedSize(400, 60)
+            self._widget.setFixedSize(320, 220)
 
-            # Position: bottom-center of screen
-            x = (screen_geom.width() - 400) // 2
-            y = screen_geom.height() - 100
+            # Position: bottom-right of screen
+            x = screen_geom.width() - 340
+            y = screen_geom.height() - 260
             self._widget.move(x, y)
 
-            # Styled label inside
-            self._label = QLabel(self._widget)
-            self._label.setFixedSize(400, 60)
+            # Layout
+            layout = QVBoxLayout(self._widget)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(8)
+
+            # Arc reactor widget
+            try:
+                from jarvis.face.arc_reactor import ArcReactorWidget
+                self._arc_reactor = ArcReactorWidget()
+                layout.addWidget(self._arc_reactor, alignment=Qt.AlignmentFlag.AlignCenter)
+            except Exception:
+                logger.warning("Arc reactor widget unavailable — using text-only overlay")
+
+            # Status text label
+            font_name = "Segoe UI" if sys.platform == "win32" else "SF Pro Display"
+            self._label = QLabel()
             self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._label.setFont(QFont("SF Pro Display", 14))
+            self._label.setFont(QFont(font_name, 11))
+            self._label.setWordWrap(True)
+            self._label.setFixedWidth(300)
             self._label.setStyleSheet(
                 """
                 QLabel {
-                    background-color: rgba(30, 30, 30, 200);
-                    color: white;
-                    border-radius: 30px;
-                    padding: 0 20px;
+                    background-color: rgba(20, 20, 20, 180);
+                    color: rgba(255, 255, 255, 220);
+                    border-radius: 16px;
+                    padding: 8px 16px;
                 }
                 """
             )
+            layout.addWidget(self._label, alignment=Qt.AlignmentFlag.AlignCenter)
 
             # Auto-hide timer
             self._hide_timer = QTimer()
@@ -96,7 +125,7 @@ class OverlayHUD:
 
             # Start hidden
             self._widget.hide()
-            logger.info("Overlay HUD initialized")
+            logger.info("Overlay HUD initialized (with arc reactor)")
 
         except ImportError:
             logger.warning("PyQt6 not available — overlay disabled")
@@ -105,10 +134,11 @@ class OverlayHUD:
 
     def _show(self, text: str) -> None:
         """Show the overlay with the given text."""
-        if self._widget is None or self._label is None:
+        if self._widget is None:
             return
 
-        self._label.setText(text)
+        if self._label is not None:
+            self._label.setText(text)
         if not self._widget.isVisible():
             self._widget.show()
 
@@ -126,6 +156,12 @@ class OverlayHUD:
         if self._hide_timer:
             self._hide_timer.start(_AUTOHIDE_DELAY_MS)
 
+    def _set_reactor_state(self, state: JarvisState) -> None:
+        """Update the arc reactor animation state."""
+        if self._arc_reactor is not None:
+            state_name = _STATE_NAMES.get(state, "idle")
+            self._arc_reactor.set_state(state_name)
+
     # ── Event handlers ───────────────────────────────────────────────
 
     def _on_state_changed(self, data) -> None:
@@ -138,25 +174,26 @@ class OverlayHUD:
             return
 
         self._current_state = state
+        self._set_reactor_state(state)
 
         if state == JarvisState.LISTENING:
-            self._show("\U0001F3A4  Listening...")
+            self._show("Listening...")
         elif state == JarvisState.PROCESSING:
-            self._show("\U0001F504  Thinking...")
+            self._show("Thinking...")
         elif state == JarvisState.IDLE:
             self._schedule_hide()
         elif state == JarvisState.ERROR:
-            self._show("\U0000274C  Error")
+            self._show("Something went wrong.")
             self._schedule_hide()
 
     def _on_partial_transcript(self, text) -> None:
         if isinstance(text, str) and text.strip():
-            self._show(f"\U0001F3A4  {text}")
+            self._show(text)
 
     def _on_speech_start(self, text) -> None:
         if isinstance(text, str) and text.strip():
-            display = text[:60] + "..." if len(text) > 60 else text
-            self._show(f"\U0001F50A  {display}")
+            display = text[:80] + "..." if len(text) > 80 else text
+            self._show(display)
 
     def _on_speech_end(self, _data) -> None:
         self._schedule_hide()

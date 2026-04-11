@@ -27,12 +27,36 @@ _SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "system.txt"
 
 
 def _load_system_prompt() -> str:
-    """Read the system prompt from disk."""
+    """Read the system prompt template and fill in runtime context."""
+    import datetime
+    import platform as plat
+
     try:
-        return _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+        template = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
     except OSError:
         logger.warning("Could not load system prompt from %s", _SYSTEM_PROMPT_PATH)
-        return "You are Jarvis, a helpful desktop AI assistant."
+        template = "You are Jarvis, a helpful desktop AI assistant."
+
+    now = datetime.datetime.now()
+    hour = now.hour
+    if hour < 12:
+        time_of_day = "morning"
+    elif hour < 17:
+        time_of_day = "afternoon"
+    else:
+        time_of_day = "evening"
+
+    try:
+        return template.format(
+            time_of_day=time_of_day,
+            day_of_week=now.strftime("%A"),
+            date=now.strftime("%B %d, %Y"),
+            platform=plat.system(),
+            interaction_count=0,  # updated per-call in process()
+        )
+    except KeyError:
+        # Template has unknown placeholders — use as-is
+        return template
 
 
 def _extract_sources(tool_results: list[ToolResult]) -> list[str]:

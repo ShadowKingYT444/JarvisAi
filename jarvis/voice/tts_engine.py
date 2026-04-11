@@ -207,12 +207,13 @@ class TTSEngine:
         elif engine == "pyttsx3":
             return Pyttsx3Backend(rate=self._config.tts_rate)
         else:
-            # Auto-detect best available
+            # Auto-detect best available backend for this platform
             if platform.system() == "Darwin":
                 return MacOSSayBackend(
                     voice=self._config.tts_voice,
                     rate=self._config.tts_rate,
                 )
+            # Windows / Linux: pyttsx3 is the reliable cross-platform fallback
             return Pyttsx3Backend(rate=self._config.tts_rate)
 
     async def speak(self, text: str) -> None:

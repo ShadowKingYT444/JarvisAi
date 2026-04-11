@@ -262,6 +262,149 @@ def _build_declarations() -> list[protos.FunctionDeclaration]:
         ),
     )
 
+    # ── Weather ─────────────────────────────────���───────────────────
+    get_weather = protos.FunctionDeclaration(
+        name="get_weather",
+        description="Get current weather conditions and forecast for a location.",
+        parameters=_schema(
+            protos.Type.OBJECT,
+            properties={
+                "location": _string(
+                    "City name or location (leave empty for auto-detect)."
+                ),
+            },
+        ),
+    )
+
+    # ── News ───────────────────────────────────────────────────────
+    get_news = protos.FunctionDeclaration(
+        name="get_news",
+        description=(
+            "Get latest news headlines. Topics: top, technology, business, "
+            "science, world, sports, entertainment."
+        ),
+        parameters=_schema(
+            protos.Type.OBJECT,
+            properties={
+                "topic": _string(
+                    "News topic/category (default 'top').",
+                    enum=["top", "technology", "business", "science",
+                          "world", "sports", "entertainment"],
+                ),
+                "count": _integer("Number of articles to return (default 5)."),
+            },
+        ),
+    )
+
+    # ── System monitor ─────────────────────────────────────────────
+    get_system_stats = protos.FunctionDeclaration(
+        name="get_system_stats",
+        description=(
+            "Get current system resource usage: CPU, RAM, disk, and battery."
+        ),
+        parameters=_schema(protos.Type.OBJECT, properties={}),
+    )
+
+    list_running_apps = protos.FunctionDeclaration(
+        name="list_running_apps",
+        description="List currently running applications and processes.",
+        parameters=_schema(protos.Type.OBJECT, properties={}),
+    )
+
+    kill_app = protos.FunctionDeclaration(
+        name="kill_app",
+        description="Terminate a running application by name.",
+        parameters=_schema(
+            protos.Type.OBJECT,
+            properties={
+                "app_name": _string("Name of the application to terminate."),
+            },
+            required=["app_name"],
+        ),
+    )
+
+    # ── Window management ──────────────────────────────────────────
+    minimize_all_windows = protos.FunctionDeclaration(
+        name="minimize_all_windows",
+        description="Minimize all open windows to show the desktop.",
+        parameters=_schema(protos.Type.OBJECT, properties={}),
+    )
+
+    switch_to_app = protos.FunctionDeclaration(
+        name="switch_to_app",
+        description="Switch to (bring to front) a running application by name.",
+        parameters=_schema(
+            protos.Type.OBJECT,
+            properties={
+                "app_name": _string("Name or title of the window to switch to."),
+            },
+            required=["app_name"],
+        ),
+    )
+
+    list_open_windows = protos.FunctionDeclaration(
+        name="list_open_windows",
+        description="List all open windows with their titles.",
+        parameters=_schema(protos.Type.OBJECT, properties={}),
+    )
+
+    # ── Media control ──────────────────────────────────────────────
+    media_play_pause = protos.FunctionDeclaration(
+        name="media_play_pause",
+        description="Toggle media play/pause for the currently playing media.",
+        parameters=_schema(protos.Type.OBJECT, properties={}),
+    )
+
+    media_next = protos.FunctionDeclaration(
+        name="media_next",
+        description="Skip to the next track in the media player.",
+        parameters=_schema(protos.Type.OBJECT, properties={}),
+    )
+
+    media_previous = protos.FunctionDeclaration(
+        name="media_previous",
+        description="Go back to the previous track in the media player.",
+        parameters=_schema(protos.Type.OBJECT, properties={}),
+    )
+
+    # ── File operations ────────────────────────────────────────────
+    find_files = protos.FunctionDeclaration(
+        name="find_files",
+        description="Search for files by name pattern on the user's computer.",
+        parameters=_schema(
+            protos.Type.OBJECT,
+            properties={
+                "query": _string("File name or pattern to search for."),
+                "path": _string("Directory to search in (default: user home)."),
+                "max_results": _integer("Maximum results to return (default 10)."),
+            },
+            required=["query"],
+        ),
+    )
+
+    open_file = protos.FunctionDeclaration(
+        name="open_file",
+        description="Open a file with its default application.",
+        parameters=_schema(
+            protos.Type.OBJECT,
+            properties={
+                "path": _string("Full path to the file to open."),
+            },
+            required=["path"],
+        ),
+    )
+
+    get_recent_files = protos.FunctionDeclaration(
+        name="get_recent_files",
+        description="Get recently modified files from Desktop, Documents, and Downloads.",
+        parameters=_schema(
+            protos.Type.OBJECT,
+            properties={
+                "count": _integer("Number of recent files to return (default 10)."),
+            },
+        ),
+    )
+
     return [
         web_search,
         open_browser_tabs,
@@ -274,6 +417,21 @@ def _build_declarations() -> list[protos.FunctionDeclaration]:
         focus_mode,
         set_reminder,
         get_active_tabs,
+        # New tools
+        get_weather,
+        get_news,
+        get_system_stats,
+        list_running_apps,
+        kill_app,
+        minimize_all_windows,
+        switch_to_app,
+        list_open_windows,
+        media_play_pause,
+        media_next,
+        media_previous,
+        find_files,
+        open_file,
+        get_recent_files,
     ]
 
 

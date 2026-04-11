@@ -1,1 +1,1 @@
-"""Activation layer — double-clap detection and mic management."""
+"""Activation layer — clap detection, wake word, hotkey, and mic management."""

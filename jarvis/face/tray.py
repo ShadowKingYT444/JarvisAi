@@ -122,8 +122,16 @@ class SystemTray:
             menu.addAction(quit_action)
 
             self._tray.setContextMenu(menu)
-            self._tray.setToolTip("Jarvis AI Assistant")
+            self._tray.setToolTip("Jarvis AI Assistant — Idle")
             self._tray.show()
+
+            # Show startup balloon
+            self._tray.showMessage(
+                "Jarvis Online",
+                "All systems operational. Double-clap, say \"Jarvis\", or press Ctrl+Shift+J to activate.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
 
             logger.info("System tray initialized")
 
@@ -156,6 +164,16 @@ class SystemTray:
                 self._status_action.setText(f"Jarvis — {state.value.title()}")
             if hasattr(self, "_focus_action"):
                 self._focus_action.setChecked(state == JarvisState.FOCUS_MODE)
+            if self._tray:
+                tooltip_map = {
+                    JarvisState.IDLE: "Jarvis — Ready",
+                    JarvisState.LISTENING: "Jarvis — Listening...",
+                    JarvisState.PROCESSING: "Jarvis — Thinking...",
+                    JarvisState.SPEAKING: "Jarvis — Speaking",
+                    JarvisState.ERROR: "Jarvis — Error",
+                    JarvisState.FOCUS_MODE: "Jarvis — Focus Mode",
+                }
+                self._tray.setToolTip(tooltip_map.get(state, "Jarvis AI"))
 
     def _toggle_focus_mode(self, checked: bool) -> None:
         """Toggle focus mode from tray menu."""

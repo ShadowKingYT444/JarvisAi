@@ -40,9 +40,15 @@ class AudioStream:
     is called (or the async-for exits).
     """
 
-    def __init__(self, sample_rate: int = DEFAULT_SAMPLE_RATE, block_size: int = BLOCK_SIZE) -> None:
+    def __init__(
+        self,
+        sample_rate: int = DEFAULT_SAMPLE_RATE,
+        block_size: int = BLOCK_SIZE,
+        device_index: int | None = None,
+    ) -> None:
         self._sample_rate = sample_rate
         self._block_size = block_size
+        self._device_index = device_index
         self._queue: asyncio.Queue[np.ndarray | None] = asyncio.Queue()
         self._stream: "sounddevice.InputStream | None" = None
         self._closed = False
@@ -65,6 +71,7 @@ class AudioStream:
             dtype="float32",
             blocksize=self._block_size,
             callback=self._audio_callback,
+            device=self._device_index,
         )
         self._stream.start()
         logger.debug("AudioStream opened (rate=%d, block=%d)", self._sample_rate, self._block_size)
@@ -148,8 +155,9 @@ class MicManager:
     ``MicConflictError``.
     """
 
-    def __init__(self, sample_rate: int = DEFAULT_SAMPLE_RATE) -> None:
+    def __init__(self, sample_rate: int = DEFAULT_SAMPLE_RATE, device_index: int | None = None) -> None:
         self._sample_rate = sample_rate
+        self._device_index = device_index
         self._owner: str | None = None
         self._stream: AudioStream | None = None
         self._lock = asyncio.Lock()
@@ -175,7 +183,7 @@ class MicManager:
                     f"{requester!r} cannot acquire"
                 )
 
-            stream = AudioStream(sample_rate=self._sample_rate)
+            stream = AudioStream(sample_rate=self._sample_rate, device_index=self._device_index)
             stream.open()
 
             self._owner = requester

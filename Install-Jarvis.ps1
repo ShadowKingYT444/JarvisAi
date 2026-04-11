@@ -4,8 +4,8 @@
     One-click installer for Jarvis AI Desktop Assistant.
 .DESCRIPTION
     Checks for Python 3.11+, creates a virtual environment, installs the
-    Jarvis package, collects API keys, sets up auto-start via Task Scheduler,
-    and optionally starts the daemon immediately.
+    Jarvis package, collects API keys, configures activation methods,
+    sets up auto-start via Task Scheduler, and optionally starts the daemon.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -32,9 +32,18 @@ function Write-Fail($text) {
     Write-Host "  [X] $text" -ForegroundColor Red
 }
 
+# ── Banner ────────────────────────────────────────────────────────
+
+Write-Host ""
+Write-Host "     ╔══════════════════════════════════════╗" -ForegroundColor Blue
+Write-Host "     ║       JARVIS AI v2.0 Installer       ║" -ForegroundColor Blue
+Write-Host "     ║   Your Personal Desktop Assistant     ║" -ForegroundColor Blue
+Write-Host "     ╚══════════════════════════════════════╝" -ForegroundColor Blue
+Write-Host ""
+
 # ── Step 1: Find or install Python ─────────────────────────────────
 
-Write-Header "Checking Python"
+Write-Header "Step 1/8: Checking Python"
 
 $PythonCmd = $null
 
@@ -89,26 +98,23 @@ if (-not $PythonCmd) {
         try {
             Write-Host "  Installing Python 3.12..." -ForegroundColor Cyan
             & winget install Python.Python.3.12 --accept-source-agreements --accept-package-agreements
-            # Refresh PATH
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
             $PythonCmd = "py -3"
             Write-Success "Python installed"
         } catch {
             Write-Fail "Could not install Python via winget."
             Write-Host "  Please install Python 3.11+ from https://python.org/downloads"
-            Write-Host "  Then re-run this installer."
             exit 1
         }
     } else {
         Write-Fail "Python 3.11+ is required."
-        Write-Host "  Download from: https://python.org/downloads"
         exit 1
     }
 }
 
 # ── Step 2: Create install directory ───────────────────────────────
 
-Write-Header "Setting up install directory"
+Write-Header "Step 2/8: Setting up install directory"
 
 if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
@@ -117,7 +123,7 @@ Write-Success "Install directory: $InstallDir"
 
 # ── Step 3: Create virtual environment ─────────────────────────────
 
-Write-Header "Creating virtual environment"
+Write-Header "Step 3/8: Creating virtual environment"
 
 if (Test-Path $VenvDir) {
     Write-Warn "Existing venv found -- reinstalling"
@@ -137,16 +143,14 @@ if (-not (Test-Path (Join-Path $VenvDir "Scripts\python.exe"))) {
 
 Write-Success "Virtual environment created"
 
-# Activate venv for remaining commands
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $VenvPip = Join-Path $VenvDir "Scripts\pip.exe"
 
-# Upgrade pip
 & $VenvPython -m pip install --upgrade pip --quiet 2>$null
 
 # ── Step 4: Install Jarvis package ─────────────────────────────────
 
-Write-Header "Installing Jarvis AI"
+Write-Header "Step 4/8: Installing Jarvis AI"
 
 Write-Host "  This may take a few minutes (downloading dependencies)..." -ForegroundColor Gray
 
@@ -159,10 +163,9 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Success "Jarvis AI installed"
 
-# Verify the jarvis command exists
 $JarvisCmd = Join-Path $VenvDir "Scripts\jarvis.exe"
 if (Test-Path $JarvisCmd) {
-    Write-Success "CLI command available: $JarvisCmd"
+    Write-Success "CLI command: $JarvisCmd"
 } else {
     Write-Warn "jarvis CLI not found in venv -- will use python -m jarvis"
     $JarvisCmd = "$VenvPython -m jarvis"
@@ -170,9 +173,8 @@ if (Test-Path $JarvisCmd) {
 
 # ── Step 5: Collect API keys ──────────────────────────────────────
 
-Write-Header "API Key Setup"
+Write-Header "Step 5/8: API Key Setup"
 
-# Create .jarvis directory
 if (-not (Test-Path $JarvisHome)) {
     New-Item -ItemType Directory -Path $JarvisHome -Force | Out-Null
 }
@@ -185,61 +187,123 @@ foreach ($sub in @("logs", "conversations", "backups")) {
 
 $envFile = Join-Path $JarvisHome ".env"
 
-Write-Host "  Jarvis requires a Google Gemini API key to function."
-Write-Host "  Get one free at: https://ai.google.dev" -ForegroundColor Gray
+Write-Host "  Jarvis uses Google Gemini as its brain."
+Write-Host "  Get a FREE API key at: https://ai.google.dev" -ForegroundColor Yellow
 Write-Host ""
 
 $geminiKey = Read-Host "  Gemini API Key (required)"
 if (-not $geminiKey) {
-    Write-Warn "No Gemini key provided. You can add it later in $envFile"
+    Write-Warn "No Gemini key. Add it later to $envFile"
 }
 
 Write-Host ""
-Write-Host "  Optional: Search API key enables web search functionality."
-Write-Host "  Get one at: https://console.cloud.google.com" -ForegroundColor Gray
+Write-Host "  OPTIONAL: Wake word detection ('Hey Jarvis')" -ForegroundColor Gray
+Write-Host "  Get a FREE Porcupine key at: https://console.picovoice.ai" -ForegroundColor Yellow
+Write-Host "  (Press Enter to skip)" -ForegroundColor Gray
+$porcupineKey = Read-Host "  Porcupine Access Key"
+
 Write-Host ""
+Write-Host "  OPTIONAL: Premium TTS voice (ElevenLabs)" -ForegroundColor Gray
+Write-Host "  (Press Enter to skip for default Windows voice)" -ForegroundColor Gray
+$elevenLabsKey = Read-Host "  ElevenLabs API Key"
 
-$searchKey = Read-Host "  Search API Key (optional, press Enter to skip)"
-$searchEngineId = ""
-if ($searchKey) {
-    $searchEngineId = Read-Host "  Google CSE Search Engine ID"
-}
+# Write .env
+$envLines = @(
+    "# Jarvis API Keys",
+    "GOOGLE_API_KEY=$geminiKey"
+)
+if ($porcupineKey) { $envLines += "PORCUPINE_ACCESS_KEY=$porcupineKey" }
+if ($elevenLabsKey) { $envLines += "ELEVENLABS_API_KEY=$elevenLabsKey" }
 
-# Write .env file
-$envContent = @"
-# Jarvis API Keys
-GOOGLE_API_KEY=$geminiKey
-SEARCH_API_KEY=$searchKey
-SEARCH_ENGINE_ID=$searchEngineId
-# ELEVENLABS_API_KEY=
-"@
-Set-Content -Path $envFile -Value $envContent
+Set-Content -Path $envFile -Value ($envLines -join "`n")
 Write-Success "API keys saved to $envFile"
 
-# ── Step 6: Create config ─────────────────────────────────────────
+# ── Step 6: Configure activation methods ─────────────────────────
 
-$configFile = Join-Path $JarvisHome "config.yaml"
-if (-not (Test-Path $configFile)) {
-    $configContent = @"
+Write-Header "Step 6/8: Activation Setup"
+
+Write-Host "  How would you like to activate Jarvis?"
+Write-Host ""
+Write-Host "  1. Double-clap     (clap twice near your mic)" -ForegroundColor White
+Write-Host "  2. Wake word       (say 'Jarvis' — requires Porcupine key)" -ForegroundColor White
+Write-Host "  3. Hotkey           (Ctrl+Shift+J)" -ForegroundColor White
+Write-Host "  4. All of the above" -ForegroundColor White
+Write-Host ""
+
+$activationChoice = Read-Host "  Choose activation method(s) [1/2/3/4, default=4]"
+
+$activationMethods = @()
+switch ($activationChoice) {
+    "1" { $activationMethods = @("clap") }
+    "2" { $activationMethods = @("wake_word") }
+    "3" { $activationMethods = @("hotkey") }
+    default {
+        $activationMethods = @("clap", "hotkey")
+        if ($porcupineKey) { $activationMethods += "wake_word" }
+    }
+}
+
+$activationStr = ($activationMethods | ForEach-Object { "  - $_" }) -join "`n"
+Write-Success "Activation methods configured"
+Write-Host $activationStr -ForegroundColor Gray
+
+# Clap sensitivity
+$sensitivity = 0.7
+if ($activationMethods -contains "clap") {
+    Write-Host ""
+    Write-Host "  Clap sensitivity (0.1 = hard to trigger, 1.0 = very sensitive)" -ForegroundColor Gray
+    $sensInput = Read-Host "  Sensitivity [default=0.7]"
+    if ($sensInput) {
+        try { $sensitivity = [float]$sensInput } catch { $sensitivity = 0.7 }
+    }
+}
+
+# Hotkey
+$hotkey = "ctrl+shift+j"
+if ($activationMethods -contains "hotkey") {
+    Write-Host ""
+    $hkInput = Read-Host "  Hotkey combo [default=ctrl+shift+j]"
+    if ($hkInput) { $hotkey = $hkInput }
+}
+
+# TTS engine
+$ttsEngine = "auto"
+if ($elevenLabsKey) {
+    $ttsEngine = "elevenlabs"
+}
+
+# Whisper model size
+Write-Host ""
+Write-Host "  Speech recognition model size:" -ForegroundColor Gray
+Write-Host "    tiny.en  - Fastest, least accurate (< 100 MB)" -ForegroundColor Gray
+Write-Host "    base.en  - Good balance (default, ~150 MB)" -ForegroundColor Gray
+Write-Host "    small.en - Better accuracy (~500 MB)" -ForegroundColor Gray
+$whisperChoice = Read-Host "  Model [default=base.en]"
+if (-not $whisperChoice) { $whisperChoice = "base.en" }
+
+# Write config
+$activationYaml = "activation_methods:`n" + (($activationMethods | ForEach-Object { "  - $_" }) -join "`n")
+
+$configContent = @"
 # Jarvis AI Configuration
 gemini_model: gemini-2.0-flash
-whisper_model_size: base.en
-tts_engine: pyttsx3
-tts_voice: ""
+whisper_model_size: $whisperChoice
+tts_engine: $ttsEngine
 tts_rate: 180
-clap_sensitivity: 0.7
-search_provider: google_cse
+clap_sensitivity: $sensitivity
+hotkey: $hotkey
+search_provider: auto
 headless: false
+$activationYaml
 "@
-    Set-Content -Path $configFile -Value $configContent
-    Write-Success "Config created: $configFile"
-} else {
-    Write-Success "Config already exists: $configFile"
-}
+
+$configFile = Join-Path $JarvisHome "config.yaml"
+Set-Content -Path $configFile -Value $configContent
+Write-Success "Config saved: $configFile"
 
 # ── Step 7: Set up auto-start ─────────────────────────────────────
 
-Write-Header "Auto-Start Setup"
+Write-Header "Step 7/8: Auto-Start Setup"
 
 $pythonw = Join-Path $VenvDir "Scripts\pythonw.exe"
 if (-not (Test-Path $pythonw)) {
@@ -250,21 +314,40 @@ $servicePath = Join-Path $ScriptDir "jarvis\daemon\service.py"
 
 $autoStart = Read-Host "  Start Jarvis automatically on login? (Y/n)"
 if ($autoStart -ne "n") {
-    $taskCmd = "`"$pythonw`" `"$servicePath`" --headless"
-    $result = & schtasks /create /tn "JarvisAI" /tr $taskCmd /sc onlogon /rl highest /f 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Success "Task Scheduler entry created (runs on login)"
+    $taskCmd = "`"$pythonw`" `"$servicePath`""
+    $schtaskOk = $false
+    try {
+        $ErrorActionPreference = "Continue"
+        $null = & schtasks /create /tn "JarvisAI" /tr $taskCmd /sc onlogon /f 2>&1
+        if ($LASTEXITCODE -eq 0) { $schtaskOk = $true }
+    } catch {}
+    $ErrorActionPreference = "Stop"
+
+    if ($schtaskOk) {
+        Write-Success "Auto-start enabled (Task Scheduler)"
     } else {
-        Write-Warn "Could not create scheduled task (may need admin rights)"
-        Write-Host "  You can run Jarvis manually: $JarvisCmd start --headless"
+        Write-Warn "Task Scheduler unavailable, using Startup folder"
+        $startupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
+        try {
+            $ws = New-Object -ComObject WScript.Shell
+            $lnk = $ws.CreateShortcut((Join-Path $startupDir "Jarvis AI.lnk"))
+            $lnk.TargetPath = $pythonw
+            $lnk.Arguments = "`"$servicePath`""
+            $lnk.WorkingDirectory = $InstallDir
+            $lnk.Description = "Jarvis AI Desktop Assistant"
+            $lnk.Save()
+            Write-Success "Auto-start enabled (Startup folder)"
+        } catch {
+            Write-Warn "Could not set up auto-start."
+        }
     }
 } else {
-    Write-Host "  Skipped. Run manually: $JarvisCmd start --headless" -ForegroundColor Gray
+    Write-Host "  Skipped." -ForegroundColor Gray
 }
 
-# ── Step 8: Create Start Menu shortcut ────────────────────────────
+# ── Step 8: Start Menu shortcut + launch ──────────────────────────
 
-Write-Header "Creating Shortcuts"
+Write-Header "Step 8/8: Finishing Up"
 
 $startMenuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
 $shortcutPath = Join-Path $startMenuDir "Jarvis AI.lnk"
@@ -273,7 +356,7 @@ try {
     $ws = New-Object -ComObject WScript.Shell
     $shortcut = $ws.CreateShortcut($shortcutPath)
     $shortcut.TargetPath = $pythonw
-    $shortcut.Arguments = "`"$servicePath`" --headless"
+    $shortcut.Arguments = "`"$servicePath`""
     $shortcut.WorkingDirectory = $InstallDir
     $shortcut.Description = "Jarvis AI Desktop Assistant"
     $shortcut.Save()
@@ -282,29 +365,47 @@ try {
     Write-Warn "Could not create Start Menu shortcut"
 }
 
-# ── Step 9: Offer to start now ────────────────────────────────────
+# Add jarvis to PATH for this session
+$venvScripts = Join-Path $VenvDir "Scripts"
+if ($env:Path -notlike "*$venvScripts*") {
+    $env:Path = "$venvScripts;$env:Path"
+}
 
-Write-Header "Setup Complete!"
-
-Write-Host "  Jarvis AI has been installed successfully." -ForegroundColor Green
 Write-Host ""
-Write-Host "  Install location:  $InstallDir"
-Write-Host "  Config directory:  $JarvisHome"
-Write-Host "  CLI command:       $JarvisCmd"
+Write-Host "  ╔══════════════════════════════════════╗" -ForegroundColor Green
+Write-Host "  ║     Jarvis AI installed and ready!    ║" -ForegroundColor Green
+Write-Host "  ╚══════════════════════════════════════╝" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Install location:  $InstallDir" -ForegroundColor Gray
+Write-Host "  Config directory:  $JarvisHome" -ForegroundColor Gray
+Write-Host "  CLI command:       jarvis" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  Activation:" -ForegroundColor White
+foreach ($m in $activationMethods) {
+    switch ($m) {
+        "clap"      { Write-Host "    - Double-clap your hands" -ForegroundColor Cyan }
+        "wake_word" { Write-Host "    - Say 'Jarvis'" -ForegroundColor Cyan }
+        "hotkey"    { Write-Host "    - Press $hotkey" -ForegroundColor Cyan }
+    }
+}
 Write-Host ""
 
 $startNow = Read-Host "  Start Jarvis now? (Y/n)"
 if ($startNow -ne "n") {
-    Write-Host "  Starting Jarvis in background..." -ForegroundColor Cyan
-    Start-Process -FilePath $pythonw -ArgumentList "`"$servicePath`" --headless" -WindowStyle Hidden
-    Write-Success "Jarvis is running in the background!"
     Write-Host ""
-    Write-Host "  Send a command:  $JarvisCmd text `"hello`""
-    Write-Host "  Check status:    $JarvisCmd status"
-    Write-Host "  View logs:       $JarvisCmd log"
-    Write-Host "  Stop:            $JarvisCmd stop"
+    Write-Host "  Starting Jarvis..." -ForegroundColor Cyan
+    Start-Process -FilePath $VenvPython -ArgumentList "`"$servicePath`"" -WindowStyle Hidden
+    Start-Sleep -Seconds 3
+    Write-Success "Jarvis is running!"
+    Write-Host ""
+    Write-Host "  Try these commands:" -ForegroundColor White
+    Write-Host "    jarvis text `"hello`"       — Send a text command" -ForegroundColor Gray
+    Write-Host "    jarvis status              — Check if running" -ForegroundColor Gray
+    Write-Host "    jarvis start --verbose     — See all output (debug)" -ForegroundColor Gray
+    Write-Host "    jarvis devices             — List audio devices" -ForegroundColor Gray
+    Write-Host "    jarvis stop                — Stop Jarvis" -ForegroundColor Gray
 } else {
-    Write-Host "  To start later:  $JarvisCmd start --headless"
+    Write-Host "  To start later:  jarvis start"
 }
 
 Write-Host ""
