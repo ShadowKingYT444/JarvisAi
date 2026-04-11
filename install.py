@@ -34,12 +34,13 @@ def main() -> int:
 
     cli_only = "--cli" in sys.argv
 
-    if sys.platform == "win32" and not cli_only:
+    if sys.platform == "win32":
         ps_script = script_dir / "Install-Jarvis.ps1"
         if ps_script.exists():
-            result = subprocess.run(
-                ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(ps_script)],
-            )
+            command = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(ps_script)]
+            if cli_only:
+                command.append("-NoGui")
+            result = subprocess.run(command)
             return result.returncode
 
     print("Installing Jarvis AI package...")

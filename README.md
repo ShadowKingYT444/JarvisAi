@@ -52,7 +52,9 @@ JARVIS DAEMON (always-on)
 
 That's it. Jarvis will auto-start on login and run in the background.
 
-The Windows bootstrapper creates a local virtual environment, installs the package, and launches the visual setup wizard. The wizard saves the startup sequence defaults for the first launch: project directory, browser URLs, app defaults, Warp, and Claude settings.
+The Windows bootstrapper creates a local virtual environment, stops a previous Jarvis install if one is running, repairs locked installs by falling back to a fresh side-by-side environment, and launches the visual setup wizard. The wizard saves the startup sequence defaults for the first launch: project directory, browser URLs, app defaults, Warp, and Claude settings.
+
+Manual Windows launcher: `%LOCALAPPDATA%\JarvisAI\Jarvis AI.cmd`
 
 ### Any OS (pip install)
 

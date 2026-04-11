@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.0.3 (2026-04-10)
+
+Windows installer repair release focused on locked-venv recovery and one-shot reinstall reliability.
+
+### Fixed
+- Stopped the Windows bootstrapper from hard-failing when `%LOCALAPPDATA%\JarvisAI\venv` contains locked files
+- Added process cleanup, bounded delete retries, and side-by-side `venv-<timestamp>` fallback for reinstall/repair runs
+- Added a stable manual launcher at `%LOCALAPPDATA%\JarvisAI\Jarvis AI.cmd` and recorded the active venv in `current-venv.txt`
+- Routed `python install.py --cli` through the same hardened PowerShell bootstrap path on Windows
+- Hardened the PowerShell uninstaller with the same best-effort locked-file cleanup logic
+
+### Verification
+- Passed a real Windows smoke test where a `.pyd` file inside the old venv was held open during reinstall; the installer recovered by creating a fresh side-by-side venv and completed successfully
+- Added bootstrap routing and no-GUI autostart tests
+
 ## v2.0.2 (2026-04-10)
 
 Installer and release alignment update focused on Windows startup reliability.

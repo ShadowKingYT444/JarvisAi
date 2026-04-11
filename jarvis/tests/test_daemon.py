@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-from jarvis.daemon.cli import _is_daemon_running
+from jarvis.daemon.cli import _is_daemon_running, cmd_install
 from jarvis.daemon.installer import (
     PLIST_LABEL,
     _jarvis_command,
@@ -76,3 +76,10 @@ class TestInstaller:
         text = script_path.read_text(encoding="utf-8")
         assert "jarvis start" in text
         assert "--headless" not in text
+
+    def test_cli_install_can_skip_autostart_via_env(self):
+        args = type("Args", (), {"no_gui": True})()
+        with patch.dict(os.environ, {"JARVIS_SKIP_AUTOSTART": "1"}):
+            with patch("jarvis.daemon.installer.install") as install:
+                cmd_install(args)
+        install.assert_called_once_with(enable_autostart=False)

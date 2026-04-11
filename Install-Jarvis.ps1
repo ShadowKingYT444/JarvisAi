@@ -7,43 +7,53 @@
     Jarvis package, then launches the Python setup wizard.
 #>
 
-$ErrorActionPreference = 'Stop'
+param(
+    [switch]$NoGui
+)
+
+$ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$InstallDir = Join-Path $env:LOCALAPPDATA 'JarvisAI'
-$VenvDir = Join-Path $InstallDir 'venv'
+$InstallDir = Join-Path $env:LOCALAPPDATA "JarvisAI"
+$CanonicalVenvDir = Join-Path $InstallDir "venv"
+$JarvisHome = Join-Path $env:USERPROFILE ".jarvis"
+$CurrentVenvMarker = Join-Path $InstallDir "current-venv.txt"
 
 function Write-Header($text) {
-    Write-Host ''
-    Write-Host ('== ' + $text + ' ==') -ForegroundColor Cyan
-    Write-Host ''
+    Write-Host ""
+    Write-Host ("== " + $text + " ==") -ForegroundColor Cyan
+    Write-Host ""
 }
 
 function Write-Ok($text) {
-    Write-Host ('  [OK] ' + $text) -ForegroundColor Green
+    Write-Host ("  [OK] " + $text) -ForegroundColor Green
 }
 
 function Write-Warn($text) {
-    Write-Host ('  [!] ' + $text) -ForegroundColor Yellow
+    Write-Host ("  [!] " + $text) -ForegroundColor Yellow
 }
 
 function Write-Fail($text) {
-    Write-Host ('  [X] ' + $text) -ForegroundColor Red
+    Write-Host ("  [X] " + $text) -ForegroundColor Red
+}
+
+function Write-Info($text) {
+    Write-Host ("  [--] " + $text) -ForegroundColor Gray
 }
 
 function Get-PythonLauncher {
     $candidates = @(
-        @{ Command = 'py'; Args = @('-3') },
-        @{ Command = 'python'; Args = @() },
-        @{ Command = 'python3'; Args = @() }
+        @{ Command = "py"; Args = @("-3") },
+        @{ Command = "python"; Args = @() },
+        @{ Command = "python3"; Args = @() }
     )
 
     foreach ($candidate in $candidates) {
         try {
             $versionOutput = & $($candidate.Command) @($candidate.Args) --version 2>&1
-            if ($versionOutput -match 'Python (\d+)\.(\d+)') {
+            if ($versionOutput -match "Python (\d+)\.(\d+)") {
                 $major = [int]$Matches[1]
                 $minor = [int]$Matches[2]
-                if ($major -ge 3 -and $minor -ge 11) {
+                if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
                     return [pscustomobject]@{
                         Command = $candidate.Command
                         Args    = $candidate.Args
@@ -58,86 +68,215 @@ function Get-PythonLauncher {
     return $null
 }
 
-Write-Host ''
-Write-Host '     ╔══════════════════════════════════════╗' -ForegroundColor Blue
-Write-Host '     ║       JARVIS AI v2.0 Installer       ║' -ForegroundColor Blue
-Write-Host '     ║        Windows bootstrap flow        ║' -ForegroundColor Blue
-Write-Host '     ╚══════════════════════════════════════╝' -ForegroundColor Blue
-Write-Host ''
+function Stop-JarvisProcesses {
+    $stopped = $false
+    $pidFile = Join-Path $JarvisHome "jarvis.pid"
+    $portFile = Join-Path $JarvisHome "jarvis.port"
 
-Write-Header 'Step 1/4: Checking Python'
+    if (Test-Path -LiteralPath $pidFile) {
+        $pidValue = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($pidValue -match "^\d+$") {
+            try {
+                Stop-Process -Id ([int]$pidValue) -Force -ErrorAction Stop
+                $stopped = $true
+            } catch {
+            }
+        }
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $portFile -Force -ErrorAction SilentlyContinue
+
+    try {
+        $escapedInstallDir = [Regex]::Escape($InstallDir)
+        $pythonProcesses = Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'" -ErrorAction SilentlyContinue
+        foreach ($process in $pythonProcesses) {
+            if (-not $process.ExecutablePath) {
+                continue
+            }
+            if ($process.ExecutablePath -notmatch "^$escapedInstallDir(\\|$)") {
+                continue
+            }
+            if ($process.ProcessId -eq $PID) {
+                continue
+            }
+            try {
+                Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+                $stopped = $true
+            } catch {
+            }
+        }
+    } catch {
+    }
+
+    if ($stopped) {
+        Start-Sleep -Milliseconds 1200
+        Write-Ok "Stopped running Jarvis processes"
+    } else {
+        Write-Info "No running Jarvis process found"
+    }
+}
+
+function Remove-DirectoryBestEffort([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $true
+    }
+
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+                try {
+                    $_.Attributes = "Normal"
+                } catch {
+                }
+            }
+
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            return $true
+        } catch {
+            if ($attempt -lt 3) {
+                Start-Sleep -Milliseconds (600 * $attempt)
+            }
+        }
+    }
+
+    return $false
+}
+
+function Get-FreshVenvDir {
+    if (-not (Test-Path -LiteralPath $CanonicalVenvDir)) {
+        return $CanonicalVenvDir
+    }
+
+    do {
+        $candidate = Join-Path $InstallDir ("venv-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+        Start-Sleep -Milliseconds 200
+    } while ($true)
+}
+
+function Write-ManualLauncher([string]$VenvDir) {
+    $launcherPath = Join-Path $InstallDir "Jarvis AI.cmd"
+    $pythonExe = Join-Path $VenvDir "Scripts\python.exe"
+    $launcher = @(
+        "@echo off",
+        "setlocal",
+        "REM Stable manual launcher generated by the installer",
+        ('"{0}" -m jarvis %*' -f $pythonExe)
+    ) -join "`r`n"
+    Set-Content -LiteralPath $launcherPath -Value ($launcher + "`r`n") -Encoding ASCII
+    Set-Content -LiteralPath $CurrentVenvMarker -Value ($VenvDir + "`r`n") -Encoding ASCII
+    return $launcherPath
+}
+
+function Remove-StaleVenvs([string]$CurrentVenvDir) {
+    Get-ChildItem -LiteralPath $InstallDir -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "venv*" -and $_.FullName -ne $CurrentVenvDir } |
+        ForEach-Object {
+            if (Remove-DirectoryBestEffort $_.FullName) {
+                Write-Info ("Removed old environment: " + $_.Name)
+            } else {
+                Write-Info ("Left old environment in place because it is still locked: " + $_.Name)
+            }
+        }
+}
+
+Write-Host ""
+Write-Host "     +--------------------------------------+" -ForegroundColor Blue
+Write-Host "     |       JARVIS AI v2.0 Installer       |" -ForegroundColor Blue
+Write-Host "     |        Windows bootstrap flow        |" -ForegroundColor Blue
+Write-Host "     +--------------------------------------+" -ForegroundColor Blue
+Write-Host ""
+
+Write-Header "Step 1/4: Checking Python"
 $PythonLauncher = Get-PythonLauncher
 
 if (-not $PythonLauncher) {
-    Write-Warn 'Python 3.11+ not found.'
-    $installPython = Read-Host 'Install Python 3.12 via winget? (Y/n)'
-    if ($installPython -ne 'n') {
+    Write-Warn "Python 3.11+ not found."
+    $installPython = Read-Host "Install Python 3.12 via winget? (Y/n)"
+    if ($installPython -ne "n") {
         try {
-            Write-Host 'Installing Python 3.12...' -ForegroundColor Cyan
+            Write-Host "Installing Python 3.12..." -ForegroundColor Cyan
             & winget install Python.Python.3.12 --accept-source-agreements --accept-package-agreements
-            $PythonLauncher = [pscustomobject]@{
-                Command = 'py'
-                Args    = @('-3')
-                Version = 'Python 3.12'
+            if ($LASTEXITCODE -ne 0) {
+                throw "winget install failed"
             }
-            Write-Ok 'Python installed'
+            $PythonLauncher = Get-PythonLauncher
+            if (-not $PythonLauncher) {
+                throw "Python launcher not detected after winget install"
+            }
+            Write-Ok "Python installed"
         } catch {
-            Write-Fail 'Could not install Python automatically.'
-            Write-Host 'Install Python 3.11+ from https://python.org/downloads'
+            Write-Fail "Could not install Python automatically."
+            Write-Host "Install Python 3.11+ from https://python.org/downloads"
             exit 1
         }
     } else {
-        Write-Fail 'Python 3.11+ is required.'
+        Write-Fail "Python 3.11+ is required."
         exit 1
     }
 }
 
-Write-Ok ('Found ' + $PythonLauncher.Version)
+Write-Ok ("Found " + $PythonLauncher.Version)
 
-Write-Header 'Step 2/4: Creating environment'
-if (-not (Test-Path $InstallDir)) {
+Write-Header "Step 2/4: Creating environment"
+if (-not (Test-Path -LiteralPath $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
 
-if (Test-Path $VenvDir) {
-    Write-Warn 'Existing venv found - reinstalling'
-    Remove-Item -Recurse -Force $VenvDir
+Stop-JarvisProcesses
+
+$VenvDir = $CanonicalVenvDir
+if (Test-Path -LiteralPath $CanonicalVenvDir) {
+    Write-Warn "Existing venv found - preparing reinstall"
+    if (-not (Remove-DirectoryBestEffort $CanonicalVenvDir)) {
+        Write-Warn "Existing venv is locked or still in use - creating a fresh side-by-side environment"
+        $VenvDir = Get-FreshVenvDir
+    }
 }
 
 & $($PythonLauncher.Command) @($PythonLauncher.Args) -m venv $VenvDir
 
-$VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
-if (-not (Test-Path $VenvPython)) {
-    Write-Fail 'Failed to create the virtual environment.'
+$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $VenvPython)) {
+    Write-Fail "Failed to create the virtual environment."
     exit 1
 }
 
-Write-Ok ('Virtual environment created at ' + $VenvDir)
+Write-Ok ("Virtual environment created at " + $VenvDir)
 & $VenvPython -m pip install --upgrade pip --quiet 2>$null
 
-Write-Header 'Step 3/4: Installing Jarvis'
-Write-Host 'Installing the package and dependencies. This can take a few minutes...' -ForegroundColor Gray
+Write-Header "Step 3/4: Installing Jarvis"
+Write-Host "Installing the package and dependencies. This can take a few minutes..." -ForegroundColor Gray
 
-& $VenvPython -m pip install $ScriptDir --quiet
+& $VenvPython -m pip install --upgrade $ScriptDir --quiet
 if ($LASTEXITCODE -ne 0) {
-    Write-Fail 'Package installation failed.'
-    Write-Host ('Run this manually if needed: {0} -m pip install {1}' -f $VenvPython, $ScriptDir)
+    Write-Fail "Package installation failed."
+    Write-Host ("Run this manually if needed: {0} -m pip install {1}" -f $VenvPython, $ScriptDir)
     exit 1
 }
 
-Write-Ok 'Jarvis installed'
+Write-Ok "Jarvis installed"
+Remove-StaleVenvs $VenvDir
+$ManualLauncher = Write-ManualLauncher $VenvDir
+Write-Ok ("Manual launcher ready at " + $ManualLauncher)
 
-Write-Header 'Step 4/4: Launching setup wizard'
-Write-Host 'The wizard will collect your API keys, microphone choice, and startup profile.' -ForegroundColor Gray
-Write-Host 'Recommended launch profile: double-clap to initialize, then wake word Jarvis.' -ForegroundColor Gray
+Write-Header "Step 4/4: Launching setup wizard"
+Write-Host "The wizard will collect your API keys, microphone choice, and startup profile." -ForegroundColor Gray
+Write-Host "Recommended launch profile: double-clap to initialize, then wake word Jarvis." -ForegroundColor Gray
 
-& $VenvPython -m jarvis install
+if ($NoGui) {
+    & $VenvPython -m jarvis install --no-gui
+} else {
+    & $VenvPython -m jarvis install
+}
 if ($LASTEXITCODE -ne 0) {
-    Write-Fail 'Setup wizard failed.'
+    Write-Fail "Setup wizard failed."
     exit $LASTEXITCODE
 }
 
-Write-Host ''
-Write-Ok 'Jarvis setup completed'
-Write-Host 'Use jarvis start later to launch manually.' -ForegroundColor Gray
-Write-Host ''
+Write-Host ""
+Write-Ok "Jarvis setup completed"
+Write-Host ('Use "' + $ManualLauncher + '" start to launch manually later.') -ForegroundColor Gray
+Write-Host ""

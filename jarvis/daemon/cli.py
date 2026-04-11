@@ -324,9 +324,10 @@ def cmd_config(args):
 
 def cmd_install(args):
     """Install Jarvis via GUI wizard (or CLI with --no-gui)."""
+    skip_autostart = os.environ.get("JARVIS_SKIP_AUTOSTART", "").strip().lower() in {"1", "true", "yes"}
     if getattr(args, "no_gui", False):
         from jarvis.daemon.installer import install
-        install()
+        install(enable_autostart=not skip_autostart)
     else:
         try:
             from jarvis.face.installer_wizard import install_gui
@@ -334,7 +335,7 @@ def cmd_install(args):
         except ImportError:
             print("PyQt6 not available -- falling back to CLI installer.")
             from jarvis.daemon.installer import install
-            install()
+            install(enable_autostart=not skip_autostart)
 
 
 def cmd_uninstall(args):
