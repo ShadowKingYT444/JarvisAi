@@ -52,6 +52,8 @@ JARVIS DAEMON (always-on)
 
 That's it. Jarvis will auto-start on login and run in the background.
 
+The Windows bootstrapper creates a local virtual environment, installs the package, and launches the visual setup wizard. The wizard saves the startup sequence defaults for the first launch: project directory, browser URLs, app defaults, Warp, and Claude settings.
+
 ### Any OS (pip install)
 
 ```bash
@@ -159,6 +161,20 @@ clap_sensitivity: 0.7
 search_provider: google_cse    # google_cse, serpapi
 focus_check_interval_s: 30
 headless: false
+require_initialization_clap: true
+startup_project_dir: C:/Users/you/source/project
+startup_browser: chrome
+startup_urls:
+  - https://mail.google.com/
+  - https://classroom.google.com/
+  - https://docs.google.com/
+  - https://www.youtube.com/watch?v=fPO76Jlnz6c&autoplay=1
+startup_apps:
+  - Obsidian
+  - Warp
+launch_warp_with_claude: true
+claude_command: claude
+auto_detect_microphone: true
 ```
 
 ---

@@ -4,6 +4,7 @@ Provides structured search results.  No API keys required for basic search.
 """
 
 import logging
+from inspect import signature
 from typing import Any
 
 import aiohttp
@@ -23,8 +24,19 @@ def _free_search(query: str, num_results: int) -> list[SearchResult]:
     """Free Google search via googlesearch-python — no API keys needed."""
     from googlesearch import search as gsearch  # type: ignore[import-untyped]
 
+    sig = signature(gsearch)
+    kwargs: dict[str, Any] = {}
+    if "num_results" in sig.parameters:
+        kwargs["num_results"] = num_results
+    elif "num" in sig.parameters:
+        kwargs["num"] = num_results
+        if "stop" in sig.parameters:
+            kwargs["stop"] = num_results
+    if "advanced" in sig.parameters:
+        kwargs["advanced"] = True
+
     results: list[SearchResult] = []
-    for item in gsearch(query, num_results=num_results, advanced=True):
+    for item in gsearch(query, **kwargs):
         results.append(SearchResult(
             title=getattr(item, "title", "") or "",
             snippet=getattr(item, "description", "") or "",
@@ -32,6 +44,11 @@ def _free_search(query: str, num_results: int) -> list[SearchResult]:
             source="googlesearch",
         ))
     return results
+
+
+def _fallback_search(query: str, num_results: int) -> list[SearchResult]:
+    """Free search fallback split out for easier testing."""
+    return _free_search(query, num_results)
 
 
 async def _google_cse_search(
@@ -120,7 +137,11 @@ async def web_search(
     try:
         if _config.search_provider == "serpapi" and _config.search_api_key:
             results = await _serpapi_search(query, num_results, _config.search_api_key)
-        elif _config.search_provider == "google_cse" and _config.search_api_key and _config.search_engine_id:
+        elif (
+            _config.search_provider in {"google_cse", "auto"}
+            and _config.search_api_key
+            and _config.search_engine_id
+        ):
             results = await _google_cse_search(
                 query, num_results, _config.search_api_key, _config.search_engine_id,
             )
@@ -129,7 +150,7 @@ async def web_search(
     except Exception as exc:
         logger.warning("Primary search failed (%s), trying free fallback: %s", _config.search_provider, exc)
         try:
-            results = _free_search(query, num_results)
+            results = _fallback_search(query, num_results)
         except Exception as fallback_exc:
             return ToolResult(
                 success=False,

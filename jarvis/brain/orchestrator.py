@@ -12,6 +12,14 @@ import logging
 from pathlib import Path
 from typing import Any
 
+try:
+    import google.generativeai as genai
+    from google.generativeai import protos
+except Exception:  # pragma: no cover - loaded lazily in runtime/test fallbacks
+    genai = None
+    protos = None
+
+from jarvis.brain.tool_definitions import get_tool_config, get_tool_declarations
 from jarvis.shared.config import JarvisConfig
 from jarvis.shared.events import EventBus
 from jarvis.shared.types import BrainResponse, ToolCall, ToolResult
@@ -97,36 +105,41 @@ class BrainOrchestrator:
         config: JarvisConfig,
         event_bus: EventBus | None = None,
     ) -> None:
+        from jarvis.brain.conversation import ConversationManager
+
         self._executor = tool_executor
         self._config = config
         self._event_bus = event_bus
         self._model = None
-        self._conversation = None
+        self._conversation = ConversationManager(self._config)
+        self._conversation.load_today()
         self._protos = None  # lazy reference to google.generativeai.protos
 
     def _ensure_model(self) -> None:
         """Lazy-load the Gemini SDK and create the model on first use."""
-        if self._model is not None:
+        global genai, protos
+
+        if self._model is not None and self._protos is not None:
             return
 
-        import google.generativeai as genai
-        from google.generativeai import protos
-        from jarvis.brain.conversation import ConversationManager
-        from jarvis.brain.tool_definitions import get_tool_config, get_tool_declarations
+        if genai is None or protos is None:
+            import google.generativeai as _genai
+            from google.generativeai import protos as _protos
+
+            genai = _genai
+            protos = _protos
 
         self._protos = protos
-        genai.configure(api_key=self._config.gemini_api_key)
 
-        self._model = genai.GenerativeModel(
-            model_name=self._config.gemini_model,
-            system_instruction=_load_system_prompt(),
-            tools=[protos.Tool(function_declarations=get_tool_declarations())],
-            tool_config=get_tool_config(),
-        )
-
-        self._conversation = ConversationManager(self._config)
-        self._conversation.load_today()
-        logger.info("Brain initialized (Gemini %s)", self._config.gemini_model)
+        if self._model is None:
+            genai.configure(api_key=self._config.gemini_api_key)
+            self._model = genai.GenerativeModel(
+                model_name=self._config.gemini_model,
+                system_instruction=_load_system_prompt(),
+                tools=[protos.Tool(function_declarations=get_tool_declarations())],
+                tool_config=get_tool_config(),
+            )
+            logger.info("Brain initialized (Gemini %s)", self._config.gemini_model)
 
     # ------------------------------------------------------------------
     # Public API
