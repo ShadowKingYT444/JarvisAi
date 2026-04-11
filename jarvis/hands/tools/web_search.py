@@ -1,6 +1,6 @@
-"""Web search tool — Google Custom Search API, SerpAPI, or fallback.
+"""Web search tool — free googlesearch by default, optional Google CSE / SerpAPI.
 
-Provides structured search results from multiple search providers.
+Provides structured search results.  No API keys required for basic search.
 """
 
 import logging
@@ -13,6 +13,25 @@ from jarvis.shared.config import JarvisConfig
 from jarvis.shared.types import SearchResult, ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Provider implementations
+# ---------------------------------------------------------------------------
+
+def _free_search(query: str, num_results: int) -> list[SearchResult]:
+    """Free Google search via googlesearch-python — no API keys needed."""
+    from googlesearch import search as gsearch  # type: ignore[import-untyped]
+
+    results: list[SearchResult] = []
+    for item in gsearch(query, num_results=num_results, advanced=True):
+        results.append(SearchResult(
+            title=getattr(item, "title", "") or "",
+            snippet=getattr(item, "description", "") or "",
+            url=getattr(item, "url", str(item)),
+            source="googlesearch",
+        ))
+    return results
 
 
 async def _google_cse_search(
@@ -78,26 +97,9 @@ async def _serpapi_search(
     return results
 
 
-def _fallback_search(query: str, num_results: int) -> list[SearchResult]:
-    """Last-resort fallback using googlesearch-python (synchronous)."""
-    try:
-        from googlesearch import search as gsearch  # type: ignore[import-untyped]
-    except ImportError:
-        raise RuntimeError(
-            "No search API keys configured and googlesearch-python is not installed. "
-            "Install it with: pip install googlesearch-python"
-        )
-
-    results: list[SearchResult] = []
-    for url in gsearch(query, num_results=num_results, advanced=False):
-        results.append(SearchResult(
-            title="",
-            snippet="",
-            url=url,
-            source="googlesearch_fallback",
-        ))
-    return results
-
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
 async def web_search(
     query: str,
@@ -107,30 +109,27 @@ async def web_search(
 ) -> ToolResult:
     """Execute a web search and return structured results.
 
-    Args:
-        query: The search query string.
-        num_results: Number of results to return (max 10).
-        _config: Injected JarvisConfig (set during registration).
-
-    Returns:
-        ToolResult with data=[SearchResult, ...].
+    Provider priority:
+      - "auto" (default): free googlesearch-python, no keys needed
+      - "google_cse": requires SEARCH_API_KEY + SEARCH_ENGINE_ID
+      - "serpapi": requires SEARCH_API_KEY
+    All providers fall back to free search on failure.
     """
     num_results = max(1, min(int(num_results), 10))
 
     try:
         if _config.search_provider == "serpapi" and _config.search_api_key:
             results = await _serpapi_search(query, num_results, _config.search_api_key)
-        elif _config.search_api_key and _config.search_engine_id:
+        elif _config.search_provider == "google_cse" and _config.search_api_key and _config.search_engine_id:
             results = await _google_cse_search(
                 query, num_results, _config.search_api_key, _config.search_engine_id,
             )
         else:
-            # No API keys — try local fallback
-            results = _fallback_search(query, num_results)
+            results = _free_search(query, num_results)
     except Exception as exc:
-        logger.warning("Primary search failed (%s), trying fallback: %s", _config.search_provider, exc)
+        logger.warning("Primary search failed (%s), trying free fallback: %s", _config.search_provider, exc)
         try:
-            results = _fallback_search(query, num_results)
+            results = _free_search(query, num_results)
         except Exception as fallback_exc:
             return ToolResult(
                 success=False,
@@ -145,7 +144,7 @@ async def web_search(
 
     return ToolResult(
         success=True,
-        data=[r for r in results],
+        data=list(results),
         display_text="\n".join(summary_lines),
     )
 

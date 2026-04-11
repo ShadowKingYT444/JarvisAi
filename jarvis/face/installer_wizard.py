@@ -236,15 +236,6 @@ def install_gui() -> None:
             key_row.addWidget(self.gemini_status)
             layout.addRow("", key_row)
 
-            self.search_key = QLineEdit()
-            self.search_key.setEchoMode(QLineEdit.EchoMode.Password)
-            self.search_key.setPlaceholderText("For web search functionality")
-            layout.addRow("Search API Key:", self.search_key)
-
-            self.search_engine_id = QLineEdit()
-            self.search_engine_id.setPlaceholderText("Google CSE ID (if using Google CSE)")
-            layout.addRow("Search Engine ID:", self.search_engine_id)
-
             self.elevenlabs_key = QLineEdit()
             self.elevenlabs_key.setEchoMode(QLineEdit.EchoMode.Password)
             self.elevenlabs_key.setPlaceholderText("Optional -- for premium TTS")
@@ -450,8 +441,6 @@ def install_gui() -> None:
             # Build config from wizard data
             config = JarvisConfig(
                 gemini_api_key=api_page.gemini_key.text().strip(),
-                search_api_key=api_page.search_key.text().strip(),
-                search_engine_id=api_page.search_engine_id.text().strip(),
                 elevenlabs_api_key=api_page.elevenlabs_key.text().strip(),
                 tts_engine=pref_page.tts_engine.currentText(),
                 tts_voice=pref_page.tts_voice.text() or "Daniel",

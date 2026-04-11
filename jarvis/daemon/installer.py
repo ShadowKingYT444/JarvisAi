@@ -60,7 +60,7 @@ def install(config_overrides: dict | None = None) -> None:
             f"tts_voice: {'Daniel' if system == 'Darwin' else ''}\n"
             f"tts_rate: 180\n"
             f"clap_sensitivity: 0.7\n"
-            f"search_provider: google_cse\n"
+            f"search_provider: auto\n"
         )
         print(f"Created default config: {config_path}")
 
@@ -70,8 +70,6 @@ def install(config_overrides: dict | None = None) -> None:
         env_path.write_text(
             "# Jarvis API Keys\n"
             "GOOGLE_API_KEY=\n"
-            "SEARCH_API_KEY=\n"
-            "SEARCH_ENGINE_ID=\n"
             "# ELEVENLABS_API_KEY=\n"
         )
         try:
@@ -163,13 +161,12 @@ def _install_windows() -> None:
     python = _get_venv_python()
     service_path = str(Path(__file__).parent / "service.py")
 
-    # Create scheduled task
+    # Try Task Scheduler first (user-level, no admin required)
     cmd = [
         "schtasks", "/create",
         "/tn", "JarvisAI",
         "/tr", f'"{python}" "{service_path}" --headless',
         "/sc", "onlogon",
-        "/rl", "highest",
         "/f",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -177,8 +174,24 @@ def _install_windows() -> None:
         print("Installed Windows Task Scheduler entry.")
         print("Jarvis will start automatically on login.")
     else:
-        print(f"Failed to create scheduled task: {result.stderr}")
-        print("You can still run Jarvis manually: jarvis start --headless")
+        # Fallback: Startup folder shortcut (never needs admin)
+        startup_dir = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+        shortcut_path = startup_dir / "Jarvis AI.lnk"
+        try:
+            import winreg  # noqa: F401  — available on Windows
+            # Use VBScript one-liner to create .lnk (avoids COM dependency)
+            vbs = (
+                f'Set s=CreateObject("WScript.Shell"):Set l=s.CreateShortcut("{shortcut_path}"):'
+                f'l.TargetPath="{python}":l.Arguments="""{service_path}"" --headless":'
+                f'l.WorkingDirectory="{Path(service_path).parent}":l.Save'
+            )
+            subprocess.run(["cscript", "//nologo", "//e:vbscript", "/dev/stdin"],
+                           input=vbs, capture_output=True, text=True, check=True)
+            print(f"Created Startup shortcut: {shortcut_path}")
+            print("Jarvis will start automatically on login.")
+        except Exception as e:
+            print(f"Could not set up auto-start: {e}")
+            print("You can still run Jarvis manually: jarvis start --headless")
 
 
 def _uninstall_windows() -> None:

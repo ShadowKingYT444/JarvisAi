@@ -84,7 +84,7 @@ class SettingsWidget:
         gl.addRow("Whisper Model:", whisper_row)
 
         self._fields["search_provider"] = QComboBox()
-        self._fields["search_provider"].addItems(["google_cse", "serpapi"])
+        self._fields["search_provider"].addItems(["auto", "google_cse", "serpapi"])
         gl.addRow("Search Provider:", self._fields["search_provider"])
 
         self._fields["keep_model_loaded"] = QComboBox()
