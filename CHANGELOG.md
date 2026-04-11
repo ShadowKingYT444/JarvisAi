@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.0.2 (2026-04-10)
+
+Installer and release alignment update focused on Windows startup reliability.
+
+### Fixed
+- Deferred the GUI installer write/autostart step until the user actually finishes the wizard
+- Stopped forcing `--headless` for installer-launched and login auto-start sessions so the full HUD/opening flow can run
+- Improved Windows background interpreter resolution by preferring `pythonw.exe` next to the active interpreter
+- Fixed the PowerShell uninstaller to remove the Startup-folder fallback script written by the installer
+
+### Release
+- Synced in-repo version metadata with the next GitHub release (`2.0.2`)
+- Updated README and release workflow instructions to use `jarvis start` for the full startup experience
+
 ## v2.0.0 (2026-04-10)
 
 Complete rewrite from script-based prototype to persistent, always-on AI desktop assistant.

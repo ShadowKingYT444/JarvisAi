@@ -3,7 +3,7 @@
 .SYNOPSIS
     Uninstaller for Jarvis AI Desktop Assistant.
 .DESCRIPTION
-    Removes Task Scheduler entry, Start Menu shortcut, install directory,
+    Removes Task Scheduler entry, Startup-folder script, install directory,
     and optionally the config directory.
 #>
 
@@ -40,11 +40,11 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  [--] No Task Scheduler entry found" -ForegroundColor Gray
 }
 
-# Remove Start Menu shortcut
-$shortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Jarvis AI.lnk"
-if (Test-Path $shortcutPath) {
-    Remove-Item $shortcutPath -Force
-    Write-Host "  [OK] Removed Start Menu shortcut" -ForegroundColor Green
+# Remove Startup-folder script fallback
+$startupScript = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\Jarvis AI.cmd"
+if (Test-Path $startupScript) {
+    Remove-Item $startupScript -Force
+    Write-Host "  [OK] Removed Startup-folder script" -ForegroundColor Green
 }
 
 # Remove install directory (venv + package)

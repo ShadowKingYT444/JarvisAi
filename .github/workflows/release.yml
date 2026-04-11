@@ -47,11 +47,11 @@ jobs:
             3. Double-click `setup.bat`
             4. Follow the prompts (you'll need a [Gemini API key](https://ai.google.dev))
 
-            Jarvis will auto-start on login and run in the background.
+            Jarvis will auto-start on login and run in the background with the full startup experience.
 
             ### Manual install (any OS)
             ```bash
             pip install .
             jarvis install
-            jarvis start --headless
+            jarvis start
             ```

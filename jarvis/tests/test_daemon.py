@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from jarvis.daemon.cli import _is_daemon_running
+from jarvis.daemon.installer import (
+    PLIST_LABEL,
+    _jarvis_command,
+    _preferred_windows_python,
+    _write_windows_startup_script,
+)
 
 
 class TestIsDaemonRunning:
@@ -38,8 +40,39 @@ class TestIsDaemonRunning:
 
 
 class TestInstaller:
-    def test_install_creates_directories(self, tmp_path):
-        with patch("jarvis.daemon.installer.Path") as MockPath:
-            # Just verify the installer module imports
-            from jarvis.daemon.installer import PLIST_LABEL
-            assert PLIST_LABEL == "com.jarvis.agent"
+    def test_installer_module_imports(self):
+        assert PLIST_LABEL == "com.jarvis.agent"
+
+    def test_jarvis_command_defaults_to_full_start(self):
+        assert _jarvis_command("python") == ["python", "-m", "jarvis", "start"]
+
+    def test_jarvis_command_supports_headless(self):
+        assert _jarvis_command("python", headless=True) == [
+            "python",
+            "-m",
+            "jarvis",
+            "start",
+            "--headless",
+        ]
+
+    def test_preferred_windows_python_uses_adjacent_pythonw(self, tmp_path):
+        python = tmp_path / "python.exe"
+        pythonw = tmp_path / "pythonw.exe"
+        python.write_text("")
+        pythonw.write_text("")
+
+        with patch("jarvis.daemon.installer.sys.platform", "win32"):
+            with patch("jarvis.daemon.installer.sys.executable", str(python)):
+                with patch.dict(os.environ, {}, clear=True):
+                    assert _preferred_windows_python() == str(pythonw)
+
+    def test_windows_startup_script_uses_full_start_command(self, tmp_path):
+        with patch.dict(os.environ, {"APPDATA": str(tmp_path)}):
+            script_path = _write_windows_startup_script(
+                _jarvis_command("pythonw.exe"),
+                name="Jarvis Test.cmd",
+            )
+
+        text = script_path.read_text(encoding="utf-8")
+        assert "jarvis start" in text
+        assert "--headless" not in text

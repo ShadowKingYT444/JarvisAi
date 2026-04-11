@@ -557,6 +557,7 @@ def install_gui() -> None:
             super().__init__()
             self._wizard_ref = wizard_ref
             self._installed = False
+            self._install_payload: dict[str, object] = {}
             self.setTitle("Finish")
             self.setSubTitle("Review the saved settings and install Jarvis.")
 
@@ -568,6 +569,7 @@ def install_gui() -> None:
 
             self.auto_start = QCheckBox("Install auto-start on login")
             self.auto_start.setChecked(True)
+            self.auto_start.toggled.connect(lambda _: self._refresh_summary())
             layout.addWidget(self.auto_start)
 
             self.start_now = QCheckBox("Launch Jarvis after setup")
@@ -575,9 +577,9 @@ def install_gui() -> None:
             layout.addWidget(self.start_now)
 
         def initializePage(self) -> None:
-            if self._installed:
-                return
+            self._refresh_summary()
 
+        def _build_install_payload(self) -> tuple[dict[str, object], list[str]]:
             wizard = self._wizard_ref
             secrets: SecretsPage = wizard.page(1)  # type: ignore[assignment]
             behavior: BehaviorPage = wizard.page(2)  # type: ignore[assignment]
@@ -633,8 +635,20 @@ def install_gui() -> None:
                 summary_lines.append("")
                 summary_lines.append("Warning: the Gemini key is empty. Jarvis will not be usable until a key is added.")
 
+            return overrides, summary_lines
+
+        def _refresh_summary(self) -> None:
+            overrides, summary_lines = self._build_install_payload()
+            self._install_payload = overrides
+            self.summary.setPlainText("\n".join(summary_lines))
+
+        def validatePage(self) -> bool:
+            if self._installed:
+                return True
+
             from jarvis.daemon.installer import install
 
+            overrides, summary_lines = self._build_install_payload()
             try:
                 install(
                     config_overrides=overrides,
@@ -643,12 +657,16 @@ def install_gui() -> None:
                 self.summary.setPlainText("\n".join(summary_lines))
                 self._installed = True
                 self._install_payload = overrides
+                return True
             except Exception as exc:
                 self.summary.setPlainText("\n".join(summary_lines + ["", f"Installation failed: {exc}"]))
-                self._installed = False
-                self.auto_start.setEnabled(False)
-                self.start_now.setEnabled(False)
                 logger.exception("Installer wizard failed")
+                QMessageBox.critical(
+                    self,
+                    "Installation failed",
+                    str(exc),
+                )
+                return False
 
     wizard = QWizard()
     wizard.setWindowTitle("Jarvis AI Setup")
@@ -665,21 +683,21 @@ def install_gui() -> None:
     if result != QWizard.DialogCode.Accepted:
         return
 
-    if finish_page.start_now.isChecked():
+    if finish_page.start_now.isChecked() and finish_page._installed:
+        from jarvis.daemon.installer import _jarvis_command, _preferred_windows_python
+
         python = sys.executable
         if sys.platform == "win32":
-            pythonw = python.replace("python.exe", "pythonw.exe")
-            if Path(pythonw).exists():
-                python = pythonw
+            python = _preferred_windows_python()
             subprocess.Popen(
-                [python, "-m", "jarvis", "start", "--headless"],
+                _jarvis_command(python),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         else:
             subprocess.Popen(
-                [python, "-m", "jarvis", "start", "--headless"],
+                _jarvis_command(python),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,

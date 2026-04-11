@@ -66,8 +66,8 @@ pip install .
 # Run the setup wizard (creates config + auto-start)
 jarvis install
 
-# Start headless background daemon
-jarvis start --headless
+# Start Jarvis
+jarvis start
 ```
 
 ### Developer Install
@@ -96,8 +96,8 @@ SEARCH_ENGINE_ID=your_google_cse_id
 ## Usage
 
 ```bash
-jarvis start                  # Start daemon (background)
-jarvis start --headless       # No GUI, lower RAM (recommended for always-on)
+jarvis start                  # Start daemon (background with HUD/tray)
+jarvis start --headless       # No GUI, lower RAM
 jarvis start --test           # Text mode (stdin, no mic)
 jarvis stop                   # Stop the daemon
 jarvis status                 # Check daemon status
@@ -112,11 +112,13 @@ jarvis uninstall              # Remove auto-start
 
 ## How It Works
 
-1. **Double-clap** activates Jarvis (replaces wake word for privacy)
-2. **Faster-Whisper** transcribes your voice command locally
-3. **Gemini 2.0 Flash** decides which tools to call via function calling
-4. **Tools execute**: search the web, open tabs/apps, control system
-5. **Jarvis speaks** a concise summary and opens sources in your browser
+1. **Double-clap** performs the initial Jarvis startup sequence
+2. **Jarvis** plays the greeting/opening flow and launches the configured apps/tabs
+3. **Wake word "Jarvis"** arms for follow-up voice commands after initialization
+4. **Faster-Whisper** transcribes your voice command locally
+5. **Gemini 2.0 Flash** decides which tools to call via function calling
+6. **Tools execute**: search the web, open tabs/apps, control system
+7. **Jarvis speaks** a concise summary and opens sources in your browser
 
 ### Example Commands
 

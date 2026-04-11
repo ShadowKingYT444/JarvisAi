@@ -48,11 +48,23 @@ def _preferred_windows_python() -> str:
             pythonw = Path(venv_dir) / "Scripts" / "pythonw.exe"
             if pythonw.exists():
                 return str(pythonw)
+        current = Path(sys.executable)
+        if current.name.lower() == "python.exe":
+            pythonw = current.with_name("pythonw.exe")
+            if pythonw.exists():
+                return str(pythonw)
     return sys.executable
 
 
-def _jarvis_command(python_executable: str) -> list[str]:
-    return [python_executable, "-m", "jarvis", "start", "--headless"]
+def _jarvis_command(
+    python_executable: str,
+    *,
+    headless: bool = False,
+) -> list[str]:
+    command = [python_executable, "-m", "jarvis", "start"]
+    if headless:
+        command.append("--headless")
+    return command
 
 
 def _cmd_line(command: list[str]) -> str:
