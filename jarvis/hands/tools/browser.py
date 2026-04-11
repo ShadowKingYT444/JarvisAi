@@ -146,9 +146,15 @@ def register(executor: Any, platform: Platform, config: JarvisConfig) -> None:
     """Register browser tools with the executor."""
     from functools import partial
 
-    executor.register("open_tabs", partial(open_tabs, _platform=platform))
-    executor.register("close_tab", partial(close_tab, _platform=platform))
-    executor.register("get_active_tabs", partial(get_active_tabs, _platform=platform))
+    open_tabs_handler = partial(open_tabs, _platform=platform)
+    close_tab_handler = partial(close_tab, _platform=platform)
+    get_tabs_handler = partial(get_active_tabs, _platform=platform)
+
+    executor.register("open_tabs", open_tabs_handler)
+    executor.register("open_browser_tabs", open_tabs_handler)
+    executor.register("close_tab", close_tab_handler)
+    executor.register("close_browser_tab", close_tab_handler)
+    executor.register("get_active_tabs", get_tabs_handler)
     executor.register(
         "google_search_and_display",
         partial(google_search_and_display, _platform=platform, _executor=executor),

@@ -31,14 +31,35 @@ class JarvisConfig:
 
     # Activation
     clap_sensitivity: float = 0.7
+    clap_min_gap_ms: int = 140
     clap_timeout_ms: int = 600
     listen_timeout_s: int = 5
     max_record_s: int = 15
     audio_input_device: int | None = None  # None = system default
-    activation_methods: list[str] = field(default_factory=lambda: ["clap", "hotkey"])
+    audio_input_device_follow_default: bool = True
+    auto_detect_microphone: bool = True
+    preferred_microphone_name: str = ""
+    microphone_poll_interval_s: int = 6
+    activation_methods: list[str] = field(default_factory=lambda: ["wake_word", "hotkey"])
+    require_initialization_clap: bool = True
     wake_word_keyword: str = "jarvis"
     porcupine_access_key: str = ""
     hotkey: str = "ctrl+shift+j"
+
+    # Startup workflow
+    startup_enabled: bool = True
+    startup_project_dir: str = ""
+    startup_browser: str = "chrome"
+    startup_urls: list[str] = field(default_factory=lambda: [
+        "https://mail.google.com/",
+        "https://classroom.google.com/",
+        "https://docs.google.com/document/u/0/",
+        "https://www.youtube.com/watch?v=fPO76Jlnz6c&autoplay=1",
+    ])
+    startup_apps: list[str] = field(default_factory=lambda: ["Obsidian"])
+    launch_warp_with_claude: bool = True
+    claude_command: str = "claude"
+    startup_initialized_session: bool = False
 
     # Focus Mode
     focus_check_interval_s: int = 30
@@ -62,6 +83,8 @@ class JarvisConfig:
         "safari": "Safari",
         "slack": "Slack",
         "spotify": "Spotify",
+        "obsidian": "Obsidian",
+        "warp": "Warp",
         "terminal": "Terminal",
         "finder": "Finder",
         "notes": "Notes",
@@ -97,6 +120,7 @@ class JarvisConfig:
         config_data.setdefault("search_engine_id", os.getenv("SEARCH_ENGINE_ID", ""))
         config_data.setdefault("elevenlabs_api_key", os.getenv("ELEVENLABS_API_KEY", ""))
         config_data.setdefault("porcupine_access_key", os.getenv("PORCUPINE_ACCESS_KEY", ""))
+        config_data.pop("startup_initialized_session", None)
 
         # Build config, ignoring unknown keys
         valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
@@ -113,6 +137,7 @@ class JarvisConfig:
         # Don't persist secrets to YAML
         for secret_key in ("gemini_api_key", "search_api_key", "elevenlabs_api_key", "porcupine_access_key"):
             data.pop(secret_key, None)
+        data.pop("startup_initialized_session", None)
 
         with open(expanded, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
@@ -148,3 +173,58 @@ class JarvisConfig:
 
         # Also create backups dir
         (Path(self.jarvis_home).expanduser() / "backups").mkdir(parents=True, exist_ok=True)
+
+    def resolve_audio_input_device(self) -> int | None:
+        """Return the best input device index for the current session.
+
+        The default input is preferred when ``audio_input_device_follow_default``
+        is enabled, which keeps Jarvis aligned with hot-swapped microphones.
+        If the configured device is no longer valid, this falls back to the
+        current default input or the first available input device.
+        """
+        try:
+            import sounddevice
+
+            devices = sounddevice.query_devices()
+            default_in = None
+            try:
+                default_in = sounddevice.default.device[0]
+            except Exception:
+                default_in = None
+
+            def _is_valid(index: int | None) -> bool:
+                return (
+                    index is not None
+                    and 0 <= index < len(devices)
+                    and devices[index].get("max_input_channels", 0) > 0
+                )
+
+            if not self.auto_detect_microphone:
+                if _is_valid(self.audio_input_device):
+                    return self.audio_input_device
+                if self.preferred_microphone_name:
+                    needle = self.preferred_microphone_name.lower().strip()
+                    for index, device in enumerate(devices):
+                        if (
+                            needle
+                            and needle in str(device.get("name", "")).lower()
+                            and device.get("max_input_channels", 0) > 0
+                        ):
+                            return index
+
+            if self.audio_input_device_follow_default and _is_valid(default_in):
+                return default_in
+
+            if _is_valid(self.audio_input_device):
+                return self.audio_input_device
+
+            if _is_valid(default_in):
+                return default_in
+
+            for index, device in enumerate(devices):
+                if device.get("max_input_channels", 0) > 0:
+                    return index
+        except Exception:
+            pass
+
+        return self.audio_input_device

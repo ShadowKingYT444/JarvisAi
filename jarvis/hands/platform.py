@@ -6,14 +6,27 @@ system commands, and clipboard access across macOS and Windows.
 
 import asyncio
 import logging
+import os
 import platform
+import shutil
 import subprocess
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from jarvis.shared.types import TabInfo
 
 logger = logging.getLogger(__name__)
+
+_WINDOWS_APP_ALIASES: dict[str, list[str]] = {
+    "google chrome": ["chrome.exe", "Google Chrome", "chrome"],
+    "chrome": ["chrome.exe", "Google Chrome", "chrome"],
+    "obsidian": ["Obsidian.exe", "obsidian.exe", "obsidian"],
+    "warp": ["warp.exe", "Warp.exe", "warp"],
+    "visual studio code": ["Code.exe", "code.exe", "code"],
+    "vscode": ["Code.exe", "code.exe", "code"],
+    "claude": ["claude.exe", "claude"],
+}
 
 
 class Platform(ABC):
@@ -98,6 +111,89 @@ async def _run_subprocess(
 async def _run_applescript(script: str, timeout: float = 10) -> tuple[bool, str]:
     """Execute an AppleScript string via osascript."""
     return await _run_subprocess(["osascript", "-e", script], timeout=timeout)
+
+
+def _powershell_quote(value: str) -> str:
+    """Return a single-quoted PowerShell string literal."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _windows_candidate_names(name: str) -> list[str]:
+    normalized = name.strip()
+    lowered = normalized.lower()
+    candidates = list(_WINDOWS_APP_ALIASES.get(lowered, []))
+    if normalized:
+        candidates.append(normalized)
+    if normalized and not normalized.lower().endswith(".exe"):
+        candidates.append(f"{normalized}.exe")
+    seen: set[str] = set()
+    unique: list[str] = []
+    for candidate in candidates:
+        key = candidate.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def _windows_registry_path(executable_name: str) -> str | None:
+    try:
+        import winreg
+    except ImportError:
+        return None
+
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(
+                root,
+                rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{executable_name}",
+            ) as key:
+                value, _ = winreg.QueryValueEx(key, None)
+                if value and Path(value).exists():
+                    return value
+        except OSError:
+            continue
+    return None
+
+
+def _windows_resolve_executable(name: str) -> str | None:
+    candidate_path = Path(name).expanduser()
+    if candidate_path.exists():
+        return str(candidate_path)
+
+    for candidate in _windows_candidate_names(name):
+        found = shutil.which(candidate)
+        if found:
+            return found
+
+        exe_name = candidate if candidate.lower().endswith(".exe") else f"{candidate}.exe"
+        registry_path = _windows_registry_path(exe_name)
+        if registry_path:
+            return registry_path
+
+    common_roots = [
+        os.environ.get("LOCALAPPDATA", ""),
+        os.environ.get("ProgramFiles", ""),
+        os.environ.get("ProgramFiles(x86)", ""),
+    ]
+    common_suffixes = [
+        ("Google", "Chrome", "Application", "chrome.exe"),
+        ("Obsidian", "Obsidian.exe"),
+        ("Programs", "Warp", "Warp.exe"),
+        ("Microsoft VS Code", "Code.exe"),
+    ]
+    for root in common_roots:
+        if not root:
+            continue
+        for suffix in common_suffixes:
+            path = Path(root).joinpath(*suffix)
+            if path.exists():
+                executable_name = path.name.lower()
+                if executable_name in {c.lower() for c in _windows_candidate_names(name)}:
+                    return str(path)
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -449,10 +545,27 @@ class WindowsPlatform(Platform):
         return ok
 
     async def open_app(self, name: str, args: list[str] | None = None) -> bool:
-        cmd = ["cmd", "/c", "start", "", name]
+        executable = _windows_resolve_executable(name)
+        if executable:
+            try:
+                await asyncio.create_subprocess_exec(
+                    executable,
+                    *(args or []),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                return True
+            except Exception as exc:
+                logger.warning("open_app(%s) resolved to %s but failed: %s", name, executable, exc)
+
+        arg_list = ", ".join(_powershell_quote(arg) for arg in (args or []))
+        script_lines = [f"$target = {_powershell_quote(executable or name)}"]
         if args:
-            cmd.extend(args)
-        ok, err = await _run_subprocess(cmd)
+            script_lines.append(f"$argsList = @({arg_list})")
+            script_lines.append("Start-Process -FilePath $target -ArgumentList $argsList | Out-Null")
+        else:
+            script_lines.append("Start-Process -FilePath $target | Out-Null")
+        ok, err = await self._powershell("; ".join(script_lines))
         if not ok:
             logger.warning("open_app(%s) failed: %s", name, err)
         return ok

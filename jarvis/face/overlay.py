@@ -21,6 +21,7 @@ _AUTOHIDE_DELAY_MS = 4000
 # State name mapping for the arc reactor
 _STATE_NAMES = {
     JarvisState.IDLE: "idle",
+    JarvisState.INITIALIZING: "initializing",
     JarvisState.LISTENING: "listening",
     JarvisState.PROCESSING: "processing",
     JarvisState.SPEAKING: "speaking",
@@ -51,6 +52,7 @@ class OverlayHUD:
         self._event_bus.on("transcript_partial", self._on_partial_transcript)
         self._event_bus.on("speech_start", self._on_speech_start)
         self._event_bus.on("speech_end", self._on_speech_end)
+        self._event_bus.on("overlay_status", self._on_overlay_status)
 
     def setup(self) -> None:
         """Create the overlay widget. Must be called after QApplication init."""
@@ -175,8 +177,11 @@ class OverlayHUD:
 
         self._current_state = state
         self._set_reactor_state(state)
+        metadata = data[1] if isinstance(data, tuple) and len(data) > 1 else {}
 
-        if state == JarvisState.LISTENING:
+        if state == JarvisState.INITIALIZING:
+            self._show(metadata.get("text", "Initializing Jarvis..."))
+        elif state == JarvisState.LISTENING:
             self._show("Listening...")
         elif state == JarvisState.PROCESSING:
             self._show("Thinking...")
@@ -197,3 +202,7 @@ class OverlayHUD:
 
     def _on_speech_end(self, _data) -> None:
         self._schedule_hide()
+
+    def _on_overlay_status(self, text) -> None:
+        if isinstance(text, str) and text.strip():
+            self._show(text)

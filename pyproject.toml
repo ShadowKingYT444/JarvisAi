@@ -48,6 +48,12 @@ Homepage = "https://github.com/minutecoder34-cmd/JarvisAi"
 [tool.setuptools.packages.find]
 include = ["jarvis*"]
 
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"jarvis.brain.prompts" = ["*.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["jarvis/tests"]
 asyncio_mode = "auto"

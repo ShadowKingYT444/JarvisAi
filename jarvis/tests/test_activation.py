@@ -44,12 +44,13 @@ class FakeInputStream:
     """A stand-in for ``sounddevice.InputStream`` that lets tests drive the
     audio callback manually."""
 
-    def __init__(self, *, samplerate, channels, dtype, blocksize, callback):
+    def __init__(self, *, samplerate, channels, dtype, blocksize, callback, device=None):
         self.callback = callback
         self.samplerate = samplerate
         self.channels = channels
         self.dtype = dtype
         self.blocksize = blocksize
+        self.device = device
         self._started = False
 
     def start(self):
@@ -80,6 +81,7 @@ from jarvis.activation.mic_manager import (  # noqa: E402
     MicManager,
     MicState,
 )
+from jarvis.shared.config import JarvisConfig  # noqa: E402
 import jarvis.activation.clap_detector as _clap_mod  # noqa: E402
 import jarvis.activation.mic_manager as _mic_mod  # noqa: E402
 
@@ -434,10 +436,53 @@ class TestMicManager:
         await mgr.release("ears")
 
     @pytest.mark.asyncio
-    async def test_release_when_not_held_raises(self):
+    async def test_release_when_not_held_is_idempotent(self):
         mgr = self._make_manager()
-        with pytest.raises(MicConflictError):
-            await mgr.release("nobody")
+        await mgr.release("nobody")
+        assert mgr.current_owner is None
+
+    @pytest.mark.asyncio
+    async def test_release_after_timeout_is_idempotent(self):
+        original = _mic_mod.ACTIVE_LISTEN_TIMEOUT_S
+        _mic_mod.ACTIVE_LISTEN_TIMEOUT_S = 0.1
+        try:
+            mgr = self._make_manager()
+            await mgr.acquire("ears")
+            await asyncio.sleep(0.3)
+
+            await mgr.release("ears")
+            assert mgr.current_owner is None
+        finally:
+            _mic_mod.ACTIVE_LISTEN_TIMEOUT_S = original
+
+
+class TestMicManagerExtras:
+    """Config helper coverage and additional MicManager regression tests."""
+
+    def test_resolve_audio_input_device_prefers_named_match(self):
+        original_query = _fake_sd.query_devices
+        original_default = getattr(_fake_sd.default, "device", None)
+        _fake_sd.query_devices = MagicMock(return_value=[
+            {"name": "Built-in Mic", "max_input_channels": 1},
+            {"name": "USB Conference Mic", "max_input_channels": 2},
+            {"name": "Webcam Mic", "max_input_channels": 1},
+        ])
+        _fake_sd.default.device = (0, None)
+        try:
+            cfg = JarvisConfig(
+                audio_input_device=None,
+                auto_detect_microphone=False,
+                preferred_microphone_name="conference",
+                startup_initialized_session=False,
+            )
+            assert cfg.resolve_audio_input_device() == 1
+        finally:
+            _fake_sd.query_devices = original_query
+            _fake_sd.default.device = original_default
+
+    @staticmethod
+    def _make_manager():
+        return MicManager(sample_rate=SAMPLE_RATE)
 
     # -- reacquire ---------------------------------------------------------
 

@@ -18,6 +18,8 @@ from typing import Callable
 
 import numpy as np
 
+from jarvis.activation.audio_devices import resolve_input_device, stream_device_kwargs
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -51,6 +53,10 @@ class ClapDetector:
         on_clap: Callable[[], None],
         sensitivity: float = 0.7,
         device_index: int | None = None,
+        preferred_device_name: str = "",
+        auto_detect_microphone: bool = True,
+        min_gap_ms: int = 200,
+        max_gap_ms: int = 600,
     ) -> None:
         if not 0.0 <= sensitivity <= 1.0:
             raise ValueError("sensitivity must be in [0.0, 1.0]")
@@ -58,6 +64,12 @@ class ClapDetector:
         self._on_clap = on_clap
         self._sensitivity = sensitivity
         self._device_index = device_index
+        self._preferred_device_name = preferred_device_name
+        self._auto_detect_microphone = auto_detect_microphone
+        self._resolved_device_index: int | None = None
+        self._min_gap_s = max(0.05, min_gap_ms / 1000.0)
+        self._max_gap_s = max(self._min_gap_s, max_gap_ms / 1000.0)
+        self._window_s = max(self._max_gap_s + 0.1, WINDOW_S)
 
         # Threshold state
         self._ambient_energy: float = 0.0
@@ -98,16 +110,27 @@ class ClapDetector:
                 self._calibration_frames: list[np.ndarray] = []
                 self._calibration_start: float = time.monotonic()
 
+            device = resolve_input_device(
+                preferred_index=self._device_index,
+                preferred_name=self._preferred_device_name,
+                auto_detect=self._auto_detect_microphone,
+            )
+            self._resolved_device_index = device.index
+
             self._stream = sounddevice.InputStream(
                 samplerate=SAMPLE_RATE,
                 channels=CHANNELS,
                 dtype="float32",
                 blocksize=BLOCK_SIZE,
                 callback=self._audio_callback,
-                device=self._device_index,
+                **stream_device_kwargs(device),
             )
             self._stream.start()
-            logger.info("ClapDetector started (sensitivity=%.2f)", self._sensitivity)
+            logger.info(
+                "ClapDetector started (sensitivity=%.2f, device=%s)",
+                self._sensitivity,
+                device.name,
+            )
 
     def stop(self) -> None:
         """Stop listening and release the mic stream."""
@@ -143,13 +166,20 @@ class ClapDetector:
             frames.append(indata.copy())
             collected += frames_count
 
+        device = resolve_input_device(
+            preferred_index=self._device_index,
+            preferred_name=self._preferred_device_name,
+            auto_detect=self._auto_detect_microphone,
+        )
+        self._resolved_device_index = device.index
+
         stream = sounddevice.InputStream(
             samplerate=SAMPLE_RATE,
             channels=CHANNELS,
             dtype="float32",
             blocksize=BLOCK_SIZE,
             callback=_cal_callback,
-            device=self._device_index,
+            **stream_device_kwargs(device),
         )
         stream.start()
 
@@ -243,13 +273,13 @@ class ClapDetector:
         else:
             gap = now - self._first_onset_time
 
-            if gap > WINDOW_S:
+            if gap > self._window_s:
                 # Window expired — reset
                 self._first_onset_time = None
                 # Re-check current frame as potential new first onset
                 if is_onset:
                     self._first_onset_time = now
-            elif is_onset and MIN_GAP_S <= gap <= MAX_GAP_S:
+            elif is_onset and self._min_gap_s <= gap <= self._max_gap_s:
                 # Valid double-clap!
                 self._last_detection_time = now
                 self._first_onset_time = None
@@ -258,3 +288,7 @@ class ClapDetector:
                     self._on_clap()
                 except Exception:
                     logger.exception("Error in on_clap callback")
+
+    @property
+    def resolved_device_index(self) -> int | None:
+        return self._resolved_device_index

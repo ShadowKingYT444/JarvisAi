@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Color map: state → (R, G, B) for the tray icon
 STATE_COLORS: dict[JarvisState, tuple[int, int, int]] = {
     JarvisState.IDLE: (128, 128, 128),       # Gray
+    JarvisState.INITIALIZING: (0, 188, 212),  # Cyan
     JarvisState.LISTENING: (66, 133, 244),    # Blue
     JarvisState.PROCESSING: (255, 179, 0),    # Amber
     JarvisState.SPEAKING: (52, 168, 83),      # Green

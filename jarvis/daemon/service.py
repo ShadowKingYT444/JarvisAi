@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
-import datetime
+import contextlib
 import logging
 import os
 import signal
@@ -16,6 +16,48 @@ import sys
 from pathlib import Path
 
 logger = logging.getLogger("jarvis")
+
+
+def _resolve_audio_device(config) -> tuple[int | None, str]:
+    """Return the best current audio input device and its display name."""
+    try:
+        import sounddevice
+
+        devices = sounddevice.query_devices()
+        device_index = config.resolve_audio_input_device()
+
+        if device_index is not None and 0 <= device_index < len(devices):
+            device = devices[device_index]
+            if device.get("max_input_channels", 0) > 0:
+                return device_index, device["name"]
+
+        default_in = None
+        try:
+            default_in = sounddevice.default.device[0]
+        except Exception:
+            default_in = None
+
+        if default_in is not None and 0 <= default_in < len(devices):
+            device = devices[default_in]
+            if device.get("max_input_channels", 0) > 0:
+                return default_in, device["name"]
+
+        for idx, device in enumerate(devices):
+            if device.get("max_input_channels", 0) > 0:
+                return idx, device["name"]
+    except Exception:
+        logger.debug("Failed to resolve audio input device", exc_info=True)
+
+    return config.audio_input_device, "unknown"
+
+async def _run_boot_sequence(speech_queue, config, state_mgr) -> None:
+    """Run the initial Jarvis boot sequence after the first double-clap."""
+    from jarvis.daemon.startup_sequence import run_startup_sequence
+
+    try:
+        await run_startup_sequence(config, state_mgr, speech_queue)
+    except Exception:
+        logger.exception("Boot sequence failed")
 
 
 async def run_service(test_mode: bool = False, headless: bool = False) -> None:
@@ -83,9 +125,13 @@ async def run_service(test_mode: bool = False, headless: bool = False) -> None:
             if d['max_input_channels'] > 0:
                 marker = " [DEFAULT]" if i == default_in else ""
                 logger.info("  [%d] %s (%d ch)%s", i, d['name'], d['max_input_channels'], marker)
-        selected = config.audio_input_device if config.audio_input_device is not None else default_in
-        logger.info("Using audio input device: [%d] %s", selected, devices[selected]['name'])
-        print(f"  [OK] Audio device: {devices[selected]['name']}")
+        selected, selected_name = _resolve_audio_device(config)
+        if selected is not None and 0 <= selected < len(devices):
+            logger.info("Using audio input device: [%d] %s", selected, devices[selected]['name'])
+            print(f"  [OK] Audio device: {devices[selected]['name']}")
+        else:
+            logger.info("Using audio input device: %s", selected_name)
+            print(f"  [OK] Audio device: {selected_name}")
     except Exception:
         logger.exception("Failed to enumerate audio devices")
         print("  [!!] Audio device enumeration failed")
@@ -187,42 +233,126 @@ async def _run_full_mode(
 ) -> None:
     """Full mode with clap detection, STT, and GUI."""
     from jarvis.shared.types import JarvisState
-    from jarvis.activation.mic_manager import MicManager
     from jarvis.activation.clap_detector import ClapDetector
+    from jarvis.activation.mic_manager import MicManager
+    from jarvis.activation.wake_word import WakeWordDetector
     from jarvis.ears.stt_engine import STTEngine
-
-    device_idx = config.audio_input_device
-
-    # Mic manager
-    mic_manager = MicManager(sample_rate=16000, device_index=device_idx)
-
-    # STT
-    stt_engine = STTEngine(
-        model_size=config.whisper_model_size,
-        mic_manager=mic_manager,
-        event_bus=event_bus,
-        config=config,
-    )
-
-    # Clap detector
-    clap_detector = ClapDetector(
-        on_clap=lambda: None,  # replaced below
-        sensitivity=config.clap_sensitivity,
-        device_index=device_idx,
-    )
-
-    # Command cycle triggered by activation (clap, wake word, or hotkey)
+    loop = asyncio.get_running_loop()
     processing_lock = asyncio.Lock()
+    stop_event = asyncio.Event()
+    current_device_index, current_device_name = _resolve_audio_device(config)
+    startup_complete = bool(
+        config.startup_initialized_session
+        or not config.startup_enabled
+        or not config.require_initialization_clap
+    )
+    config.startup_initialized_session = startup_complete
+    wake_word_enabled = bool(config.porcupine_access_key)
+    clap_detector: ClapDetector | None = None
+    wake_word_detector: WakeWordDetector | None = None
+    hotkey_listener = None
+    hotkey_enabled = "hotkey" in config.activation_methods
 
-    async def on_activate_async():
+    def _spawn(coro) -> None:
+        """Schedule *coro* safely from PortAudio / hotkey threads."""
+        loop.call_soon_threadsafe(lambda: asyncio.create_task(coro))
+
+    def _make_mic_manager(device_index: int | None) -> MicManager:
+        timeout_s = max(float(config.max_record_s) + 10.0, 30.0)
+        return MicManager(
+            sample_rate=16000,
+            device_index=device_index,
+            inactivity_timeout_s=timeout_s,
+            preferred_device_name=config.preferred_microphone_name,
+            auto_detect_microphone=config.auto_detect_microphone,
+        )
+
+    async def _start_wake_word_detector(device_index: int | None) -> None:
+        nonlocal wake_word_detector
+        if not wake_word_enabled:
+            return
+        if wake_word_detector is not None:
+            wake_word_detector.stop()
+
+        try:
+            wake_word_detector = WakeWordDetector(
+                on_wake_word=lambda: _spawn(_handle_wake_word()),
+                access_key=config.porcupine_access_key,
+                keyword=config.wake_word_keyword,
+                device_index=device_index,
+                preferred_device_name=config.preferred_microphone_name,
+                auto_detect_microphone=config.auto_detect_microphone,
+            )
+            wake_word_detector.start()
+            logger.info(
+                'Wake word "%s" armed on device [%s] %s',
+                config.wake_word_keyword,
+                device_index,
+                current_device_name,
+            )
+        except Exception:
+            logger.exception("Wake word detector failed to start")
+            wake_word_detector = None
+
+    async def _start_hotkey_listener() -> None:
+        nonlocal hotkey_listener
+        if not hotkey_enabled or hotkey_listener is not None:
+            return
+        try:
+            from jarvis.activation.hotkey import HotkeyListener
+
+            hotkey_listener = HotkeyListener(
+                on_hotkey=lambda: _spawn(_handle_hotkey()),
+                hotkey=config.hotkey,
+            )
+            hotkey_listener.start()
+            logger.info("Hotkey listener started (%s)", config.hotkey)
+        except Exception:
+            logger.exception("Hotkey listener failed to start")
+            hotkey_listener = None
+
+    async def _start_clap_detector(device_index: int | None) -> None:
+        nonlocal clap_detector
+        clap_detector = ClapDetector(
+            on_clap=lambda: _spawn(_handle_initial_clap()),
+            sensitivity=config.clap_sensitivity,
+            device_index=device_index,
+            preferred_device_name=config.preferred_microphone_name,
+            auto_detect_microphone=config.auto_detect_microphone,
+            min_gap_ms=config.clap_min_gap_ms,
+            max_gap_ms=config.clap_timeout_ms,
+        )
+        try:
+            await asyncio.to_thread(clap_detector.calibrate)
+        except Exception:
+            logger.exception("Clap calibration failed; continuing with inline calibration")
+        clap_detector.start()
+        logger.info(
+            "Clap detector armed on device [%s] %s (sensitivity=%.2f)",
+            device_index,
+            current_device_name,
+            config.clap_sensitivity,
+        )
+
+    async def _run_command_cycle(trigger: str) -> None:
+        nonlocal current_device_index, current_device_name
         if processing_lock.locked():
-            return  # already processing a command
+            return
 
         async with processing_lock:
-            # Stop all audio-based detectors to release mic before STT
-            clap_detector.stop()
             if wake_word_detector is not None:
                 wake_word_detector.stop()
+
+            device_index, device_name = _resolve_audio_device(config)
+            current_device_index, current_device_name = device_index, device_name
+            mic_manager = _make_mic_manager(device_index)
+            stt_engine = STTEngine(
+                model_size=config.whisper_model_size,
+                mic_manager=mic_manager,
+                event_bus=event_bus,
+                config=config,
+            )
+
             state_mgr.set_state(JarvisState.LISTENING)
             try:
                 result = await stt_engine.listen()
@@ -231,23 +361,48 @@ async def _run_full_mode(
                 else:
                     state_mgr.set_state(JarvisState.IDLE)
             except Exception:
-                logger.exception("Error in command cycle")
+                logger.exception("Error in command cycle triggered by %s", trigger)
                 state_mgr.set_state(JarvisState.IDLE)
             finally:
-                # Resume audio-based detectors after STT completes
-                if "clap" in config.activation_methods:
-                    clap_detector.start()
-                if wake_word_detector is not None and "wake_word" in config.activation_methods:
-                    try:
-                        wake_word_detector.start()
-                    except Exception:
-                        logger.exception("Failed to restart wake word detector")
+                if startup_complete and wake_word_enabled:
+                    await _start_wake_word_detector(current_device_index)
 
-    def on_activate():
-        asyncio.ensure_future(on_activate_async())
+    async def _handle_initial_clap() -> None:
+        nonlocal startup_complete
+        if startup_complete or processing_lock.locked():
+            return
 
-    # Wire up the clap callback
-    clap_detector._on_clap = on_activate
+        async with processing_lock:
+            if startup_complete:
+                return
+
+            if clap_detector is not None:
+                clap_detector.stop()
+
+            state_mgr.set_state(
+                JarvisState.INITIALIZING,
+                {"text": "Double clap detected. Initializing Jarvis."},
+            )
+            await _run_boot_sequence(speech_queue, config, state_mgr)
+            config.startup_initialized_session = True
+            startup_complete = True
+            state_mgr.set_state(JarvisState.IDLE)
+
+            if wake_word_enabled:
+                await _start_wake_word_detector(current_device_index)
+
+            if hotkey_enabled:
+                await _start_hotkey_listener()
+
+    async def _handle_wake_word() -> None:
+        if not startup_complete:
+            return
+        await _run_command_cycle("wake_word")
+
+    async def _handle_hotkey() -> None:
+        if not startup_complete:
+            return
+        await _run_command_cycle("hotkey")
 
     # Start IPC listener
     ipc_task = asyncio.create_task(
@@ -260,72 +415,69 @@ async def _run_full_mode(
     else:
         logger.info("Headless mode -- skipping GUI")
 
-    # Start clap detection
-    if "clap" in config.activation_methods:
-        logger.info("Starting clap detection -- double-clap to activate")
-        print("  [OK] Clap detection enabled (sensitivity=%.1f)" % config.clap_sensitivity)
-        clap_detector.calibrate()
-        clap_detector.start()
+    if startup_complete:
+        print("  [OK] Initialization already completed this session")
+        if wake_word_enabled:
+            await _start_wake_word_detector(current_device_index)
+        if hotkey_enabled:
+            await _start_hotkey_listener()
     else:
-        print("  [--] Clap detection disabled")
-
-    # Start wake word detection (if configured)
-    wake_word_detector = None
-    if "wake_word" in config.activation_methods:
-        try:
-            from jarvis.activation.wake_word import WakeWordDetector
-            wake_word_detector = WakeWordDetector(
-                on_wake_word=on_activate,
-                access_key=config.porcupine_access_key,
-                keyword=config.wake_word_keyword,
-                device_index=device_idx,
+        if config.startup_enabled and config.require_initialization_clap:
+            print("  [OK] Double-clap initialization armed")
+            logger.info(
+                "Waiting for initial double-clap on device [%s] %s",
+                current_device_index,
+                current_device_name,
             )
-            wake_word_detector.start()
-            print(f'  [OK] Wake word "{config.wake_word_keyword}" enabled')
-            logger.info("Wake word detection started (keyword=%s)", config.wake_word_keyword)
-        except Exception:
-            logger.exception("Wake word detection failed to start")
-            print('  [!!] Wake word detection failed (missing porcupine key?)')
-
-    # Start hotkey detection (if configured)
-    hotkey_listener = None
-    if "hotkey" in config.activation_methods:
-        try:
-            from jarvis.activation.hotkey import HotkeyListener
-            hotkey_listener = HotkeyListener(
-                on_hotkey=on_activate,
-                hotkey=config.hotkey,
-            )
-            hotkey_listener.start()
-            print(f"  [OK] Hotkey {config.hotkey} enabled")
-            logger.info("Hotkey listener started (%s)", config.hotkey)
-        except Exception:
-            logger.exception("Hotkey listener failed to start")
-            print("  [!!] Hotkey listener failed")
+            await _start_clap_detector(current_device_index)
+        elif wake_word_enabled:
+            print("  [OK] Wake word enabled")
+            await _start_wake_word_detector(current_device_index)
+            if hotkey_enabled:
+                await _start_hotkey_listener()
+        elif hotkey_enabled:
+            print("  [OK] Hotkey enabled")
+            await _start_hotkey_listener()
 
     state_mgr.set_state(JarvisState.IDLE)
 
-    # Boot greeting
-    hour = datetime.datetime.now().hour
-    if hour < 12:
-        greeting = "Good morning sir."
-    elif hour < 17:
-        greeting = "Good afternoon sir."
-    else:
-        greeting = "Good evening sir."
-    boot_msg = f"{greeting} Jarvis online. All systems operational."
-    logger.info("Boot greeting: %s", boot_msg)
-    print(f"\n  {boot_msg}\n")
-    await speech_queue.say(boot_msg)
+    async def _watch_audio_devices() -> None:
+        nonlocal current_device_index, current_device_name
+        if not config.auto_detect_microphone:
+            return
+
+        poll_s = max(1, int(config.microphone_poll_interval_s))
+        while not stop_event.is_set():
+            await asyncio.sleep(poll_s)
+
+            if processing_lock.locked():
+                continue
+
+            device_index, device_name = _resolve_audio_device(config)
+            if device_index == current_device_index:
+                continue
+
+            logger.info(
+                "Audio input changed from [%s] %s to [%s] %s",
+                current_device_index,
+                current_device_name,
+                device_index,
+                device_name,
+            )
+            current_device_index, current_device_name = device_index, device_name
+
+            if not startup_complete and clap_detector is not None:
+                clap_detector.stop()
+                await _start_clap_detector(current_device_index)
+            elif startup_complete and wake_word_enabled:
+                await _start_wake_word_detector(current_device_index)
+
+    audio_watch_task = asyncio.create_task(_watch_audio_devices())
 
     # Keep running
-    stop_event = asyncio.Event()
-
     def _handle_signal():
         logger.info("Shutdown signal received")
         stop_event.set()
-
-    loop = asyncio.get_event_loop()
 
     # Signal handling -- platform-aware
     if sys.platform != "win32":
@@ -348,11 +500,16 @@ async def _run_full_mode(
 
     # Cleanup
     logger.info("Shutting down...")
-    clap_detector.stop()
+    if clap_detector is not None:
+        clap_detector.stop()
     if wake_word_detector is not None:
         wake_word_detector.stop()
     if hotkey_listener is not None:
         hotkey_listener.stop()
+    if audio_watch_task is not None:
+        audio_watch_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await audio_watch_task
     await speech_queue.stop()
     ipc_task.cancel()
 

@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 STATE_COLORS: dict[str, QColor] = {
     "idle": QColor(0, 120, 215),
+    "initializing": QColor(0, 188, 212),
     "listening": QColor(0, 200, 83),
     "processing": QColor(255, 179, 0),
     "speaking": QColor(0, 210, 211),
@@ -105,6 +106,9 @@ class _OrbCanvas(QWidget):
         state = self._state
         if state == "idle":
             self._pulse = math.sin(self._phase) * 3.0
+        elif state == "initializing":
+            self._pulse = math.sin(self._phase * 1.7) * 7.0
+            self._rotation = (self._rotation + 5.0) % 360.0
         elif state == "listening":
             self._pulse = math.sin(self._phase * 2.0) * 5.0
         elif state == "processing":

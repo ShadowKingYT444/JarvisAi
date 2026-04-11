@@ -14,6 +14,8 @@ from typing import AsyncIterator
 
 import numpy as np
 
+from jarvis.activation.audio_devices import resolve_input_device, stream_device_kwargs
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SAMPLE_RATE = 16_000
 CHANNELS = 1
 BLOCK_SIZE = 1024  # ~64 ms at 16 kHz — good balance for STT chunking
-ACTIVE_LISTEN_TIMEOUT_S = 5.0  # return to passive if no speech within this
+ACTIVE_LISTEN_TIMEOUT_S = 30.0  # return to passive if no speech within this
 
 
 class MicState(Enum):
@@ -45,10 +47,15 @@ class AudioStream:
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         device_index: int | None = None,
+        preferred_device_name: str = "",
+        auto_detect_microphone: bool = True,
     ) -> None:
         self._sample_rate = sample_rate
         self._block_size = block_size
         self._device_index = device_index
+        self._preferred_device_name = preferred_device_name
+        self._auto_detect_microphone = auto_detect_microphone
+        self._resolved_device_index: int | None = None
         self._queue: asyncio.Queue[np.ndarray | None] = asyncio.Queue()
         self._stream: "sounddevice.InputStream | None" = None
         self._closed = False
@@ -62,8 +69,17 @@ class AudioStream:
         """Open the underlying PortAudio stream."""
         import sounddevice
 
-        self._loop = asyncio.get_event_loop()
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
         self._closed = False
+        device = resolve_input_device(
+            preferred_index=self._device_index,
+            preferred_name=self._preferred_device_name,
+            auto_detect=self._auto_detect_microphone,
+        )
+        self._resolved_device_index = device.index
 
         self._stream = sounddevice.InputStream(
             samplerate=self._sample_rate,
@@ -71,10 +87,15 @@ class AudioStream:
             dtype="float32",
             blocksize=self._block_size,
             callback=self._audio_callback,
-            device=self._device_index,
+            **stream_device_kwargs(device),
         )
         self._stream.start()
-        logger.debug("AudioStream opened (rate=%d, block=%d)", self._sample_rate, self._block_size)
+        logger.debug(
+            "AudioStream opened (rate=%d, block=%d, device=%s)",
+            self._sample_rate,
+            self._block_size,
+            device.name,
+        )
 
     def close(self) -> None:
         """Stop and close the underlying stream."""
@@ -138,6 +159,10 @@ class AudioStream:
     def is_open(self) -> bool:
         return self._stream is not None and not self._closed
 
+    @property
+    def resolved_device_index(self) -> int | None:
+        return self._resolved_device_index
+
 
 class MicManager:
     """Manage exclusive ownership of the system microphone.
@@ -155,9 +180,23 @@ class MicManager:
     ``MicConflictError``.
     """
 
-    def __init__(self, sample_rate: int = DEFAULT_SAMPLE_RATE, device_index: int | None = None) -> None:
+    def __init__(
+        self,
+        sample_rate: int = DEFAULT_SAMPLE_RATE,
+        device_index: int | None = None,
+        inactivity_timeout_s: float | None = None,
+        preferred_device_name: str = "",
+        auto_detect_microphone: bool = True,
+    ) -> None:
         self._sample_rate = sample_rate
         self._device_index = device_index
+        self._preferred_device_name = preferred_device_name
+        self._auto_detect_microphone = auto_detect_microphone
+        self._inactivity_timeout_s = (
+            float(inactivity_timeout_s)
+            if inactivity_timeout_s is not None
+            else ACTIVE_LISTEN_TIMEOUT_S
+        )
         self._owner: str | None = None
         self._stream: AudioStream | None = None
         self._lock = asyncio.Lock()
@@ -183,7 +222,12 @@ class MicManager:
                     f"{requester!r} cannot acquire"
                 )
 
-            stream = AudioStream(sample_rate=self._sample_rate, device_index=self._device_index)
+            stream = AudioStream(
+                sample_rate=self._sample_rate,
+                device_index=self._device_index,
+                preferred_device_name=self._preferred_device_name,
+                auto_detect_microphone=self._auto_detect_microphone,
+            )
             stream.open()
 
             self._owner = requester
@@ -206,6 +250,13 @@ class MicManager:
         current owner.
         """
         async with self._lock:
+            if self._owner is None:
+                if self._stream is not None:
+                    self._do_release()
+                else:
+                    logger.debug("Mic release requested by %r but mic is already idle", requester)
+                return
+
             if self._owner != requester:
                 raise MicConflictError(
                     f"{requester!r} cannot release — current owner is "
@@ -246,14 +297,14 @@ class MicManager:
     async def _inactivity_timeout(self, requester: str) -> None:
         """Auto-release the mic if the holder doesn't release within timeout."""
         try:
-            await asyncio.sleep(ACTIVE_LISTEN_TIMEOUT_S)
+            await asyncio.sleep(self._inactivity_timeout_s)
         except asyncio.CancelledError:
             return
         async with self._lock:
             if self._owner == requester:
                 logger.warning(
                     "Inactivity timeout (%.1f s) — auto-releasing mic from %r",
-                    ACTIVE_LISTEN_TIMEOUT_S,
+                    self._inactivity_timeout_s,
                     requester,
                 )
                 self._do_release()

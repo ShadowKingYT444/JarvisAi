@@ -13,6 +13,8 @@ from typing import Callable
 
 import numpy as np
 
+from jarvis.activation.audio_devices import resolve_input_device, stream_device_kwargs
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -53,11 +55,16 @@ class WakeWordDetector:
         access_key: str = "",
         keyword: str = "jarvis",
         device_index: int | None = None,
+        preferred_device_name: str = "",
+        auto_detect_microphone: bool = True,
     ) -> None:
         self._on_wake_word = on_wake_word
         self._access_key = access_key
         self._keyword = keyword
         self._device_index = device_index
+        self._preferred_device_name = preferred_device_name
+        self._auto_detect_microphone = auto_detect_microphone
+        self._resolved_device_index: int | None = None
 
         self._porcupine: "pvporcupine.Porcupine | None" = None  # type: ignore[name-defined]
         self._stream: "sounddevice.InputStream | None" = None  # type: ignore[name-defined]
@@ -104,6 +111,12 @@ class WakeWordDetector:
             sample_rate = self._porcupine.sample_rate
 
             self._running = True
+            device = resolve_input_device(
+                preferred_index=self._device_index,
+                preferred_name=self._preferred_device_name,
+                auto_detect=self._auto_detect_microphone,
+            )
+            self._resolved_device_index = device.index
 
             self._stream = sounddevice.InputStream(
                 samplerate=sample_rate,
@@ -111,14 +124,15 @@ class WakeWordDetector:
                 dtype="float32",
                 blocksize=frame_length,
                 callback=self._audio_callback,
-                device=self._device_index,
+                **stream_device_kwargs(device),
             )
             self._stream.start()
             logger.info(
-                "WakeWordDetector started (keyword=%r, rate=%d, frame=%d)",
+                "WakeWordDetector started (keyword=%r, rate=%d, frame=%d, device=%s)",
                 self._keyword,
                 sample_rate,
                 frame_length,
+                device.name,
             )
 
     def stop(self) -> None:
@@ -179,3 +193,7 @@ class WakeWordDetector:
                 self._on_wake_word()
             except Exception:
                 logger.exception("Error in on_wake_word callback")
+
+    @property
+    def resolved_device_index(self) -> int | None:
+        return self._resolved_device_index

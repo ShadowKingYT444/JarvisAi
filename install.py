@@ -1,79 +1,64 @@
-#!/usr/bin/env python3
-"""Jarvis AI cross-platform installer.
+"""Jarvis AI cross-platform installer bootstrap."""
 
-Usage:
-    python install.py          # Auto-detect platform and install
-    python install.py --cli    # CLI-only installer (no GUI)
-"""
-import os
+from __future__ import annotations
+
 import subprocess
 import sys
 from pathlib import Path
 
 
-def main():
-    script_dir = Path(__file__).parent.resolve()
-    os.chdir(script_dir)
+def _install_package(script_dir: Path) -> int:
+    result = subprocess.run([sys.executable, "-m", "pip", "install", str(script_dir)])
+    return result.returncode
 
-    print("=" * 50)
+
+def _launch_setup(cli_only: bool) -> int:
+    command = [sys.executable, "-m", "jarvis", "install"]
+    if cli_only:
+        command.append("--no-gui")
+    result = subprocess.run(command)
+    return result.returncode
+
+
+def main() -> int:
+    script_dir = Path(__file__).parent.resolve()
+
+    print("=" * 52)
     print("  Jarvis AI Installer")
-    print("=" * 50)
+    print("=" * 52)
     print()
 
-    # Check Python version
     if sys.version_info < (3, 11):
         print(f"ERROR: Python 3.11+ required (you have {sys.version})")
-        print("Download from: https://python.org/downloads")
-        sys.exit(1)
+        return 1
 
-    # On Windows, delegate to PowerShell installer for best experience
-    if sys.platform == "win32" and "--cli" not in sys.argv:
+    cli_only = "--cli" in sys.argv
+
+    if sys.platform == "win32" and not cli_only:
         ps_script = script_dir / "Install-Jarvis.ps1"
         if ps_script.exists():
-            print("Launching Windows installer...")
             result = subprocess.run(
                 ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(ps_script)],
             )
-            sys.exit(result.returncode)
-        # Fall through to Python-based install if PS1 not found
+            return result.returncode
 
-    # Python-based install (macOS/Linux or --cli)
     print("Installing Jarvis AI package...")
     print()
 
-    # Install the package (creates the 'jarvis' CLI command)
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", str(script_dir)],
-    )
-    if result.returncode != 0:
+    if _install_package(script_dir) != 0:
         print()
         print("ERROR: Package installation failed.")
         print("Try: pip install .")
-        sys.exit(1)
+        return 1
 
     print()
-    print("Package installed successfully!")
+    print("Package installed successfully.")
+    print()
+    print("Launching setup...")
     print()
 
-    # Run the setup wizard
-    if "--cli" in sys.argv:
-        print("Running CLI installer...")
-        from jarvis.daemon.installer import install
-        install()
-    else:
-        print("Launching setup wizard...")
-        try:
-            from jarvis.face.installer_wizard import install_gui
-            install_gui()
-        except ImportError:
-            print("PyQt6 not available. Running CLI installer.")
-            from jarvis.daemon.installer import install
-            install()
-
-    print()
-    print("Installation complete!")
-    print("Run 'jarvis start' to begin, or 'jarvis start --headless' for background mode.")
+    return _launch_setup(cli_only=cli_only)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

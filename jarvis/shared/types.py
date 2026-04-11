@@ -7,6 +7,7 @@ from typing import Any
 
 class JarvisState(Enum):
     IDLE = "idle"
+    INITIALIZING = "initializing"
     LISTENING = "listening"
     PROCESSING = "processing"
     SPEAKING = "speaking"

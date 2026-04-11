@@ -1,9 +1,4 @@
-"""GUI Installer Wizard for Jarvis.
-
-A 5-page QWizard that walks users through setup: platform detection,
-API key entry with validation, preferences, clap calibration, and
-auto-start installation.
-"""
+"""GUI installer wizard for Jarvis."""
 
 from __future__ import annotations
 
@@ -15,10 +10,10 @@ import sys
 from pathlib import Path
 
 from jarvis.shared.config import JarvisConfig
+from jarvis.shared.windows_apps import find_chrome_path, find_obsidian_path, find_warp_path
 
 logger = logging.getLogger(__name__)
 
-# Required packages to check
 REQUIRED_PACKAGES = [
     ("sounddevice", "sounddevice"),
     ("numpy", "numpy"),
@@ -39,94 +34,107 @@ OPTIONAL_PACKAGES = [
 ]
 
 DARK_STYLESHEET = """
-    QWizard, QWizardPage {
-        background-color: #1e1e2e;
-        color: #cdd6f4;
-    }
-    QLabel {
-        color: #cdd6f4;
-    }
-    QLineEdit, QComboBox, QTextEdit, QSpinBox {
-        background-color: #313244;
-        color: #cdd6f4;
-        border: 1px solid #45475a;
-        border-radius: 4px;
-        padding: 4px;
-    }
-    QLineEdit:focus, QComboBox:focus {
-        border: 1px solid #89b4fa;
-    }
-    QPushButton {
-        background-color: #45475a;
-        color: #cdd6f4;
-        border: none;
-        border-radius: 4px;
-        padding: 6px 16px;
-    }
-    QPushButton:hover {
-        background-color: #585b70;
-    }
-    QPushButton:pressed {
-        background-color: #313244;
-    }
-    QCheckBox {
-        color: #cdd6f4;
-    }
-    QCheckBox::indicator {
-        width: 16px;
-        height: 16px;
-    }
-    QSlider::groove:horizontal {
-        background: #313244;
-        height: 6px;
-        border-radius: 3px;
-    }
-    QSlider::handle:horizontal {
-        background: #89b4fa;
-        width: 16px;
-        margin: -5px 0;
-        border-radius: 8px;
-    }
-    QProgressBar {
-        background-color: #313244;
-        border: none;
-        border-radius: 4px;
-        text-align: center;
-        color: #cdd6f4;
-    }
-    QProgressBar::chunk {
-        background-color: #89b4fa;
-        border-radius: 4px;
-    }
+QWizard, QWizardPage {
+    background-color: #0f172a;
+    color: #e2e8f0;
+}
+QWizardPage {
+    padding: 10px;
+}
+QLabel {
+    color: #e2e8f0;
+}
+QLabel[role="muted"] {
+    color: #94a3b8;
+}
+QFrame#card {
+    background-color: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 14px;
+}
+QLineEdit, QComboBox, QTextEdit {
+    background-color: #0b1220;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 6px 8px;
+}
+QLineEdit:focus, QComboBox:focus, QTextEdit:focus {
+    border: 1px solid #38bdf8;
+}
+QPushButton {
+    background-color: #1d4ed8;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 14px;
+}
+QPushButton:hover {
+    background-color: #2563eb;
+}
+QPushButton:pressed {
+    background-color: #1e40af;
+}
+QPushButton:disabled {
+    background-color: #334155;
+    color: #94a3b8;
+}
+QCheckBox {
+    spacing: 8px;
+}
+QSlider::groove:horizontal {
+    background: #334155;
+    height: 6px;
+    border-radius: 3px;
+}
+QSlider::handle:horizontal {
+    background: #38bdf8;
+    width: 16px;
+    margin: -5px 0;
+    border-radius: 8px;
+}
+QProgressBar {
+    background-color: #0b1220;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    text-align: center;
+    color: #e2e8f0;
+}
+QProgressBar::chunk {
+    background-color: #38bdf8;
+    border-radius: 8px;
+}
 """
 
 
 def check_dependencies() -> tuple[list[str], list[str]]:
-    """Check which packages are installed.
+    """Return missing required and optional packages."""
+    missing_req: list[str] = []
+    missing_opt: list[str] = []
 
-    Returns (missing_required, missing_optional).
-    """
-    missing_req = []
-    missing_opt = []
     for import_name, pip_name in REQUIRED_PACKAGES:
         try:
             importlib.import_module(import_name)
         except ImportError:
             missing_req.append(pip_name)
+
     for import_name, pip_name in OPTIONAL_PACKAGES:
         try:
             importlib.import_module(import_name)
         except ImportError:
             missing_opt.append(pip_name)
+
     return missing_req, missing_opt
 
 
 def validate_gemini_key(key: str) -> bool:
-    """Test if a Gemini API key is valid."""
+    """Best-effort key validation used from the setup wizard."""
     if not key or len(key) < 10:
         return False
+
     try:
         import google.generativeai as genai
+
         genai.configure(api_key=key)
         list(genai.list_models())
         return True
@@ -134,16 +142,58 @@ def validate_gemini_key(key: str) -> bool:
         return False
 
 
+def _device_rows() -> list[tuple[int, str]]:
+    import sounddevice
+
+    devices = sounddevice.query_devices()
+    rows: list[tuple[int, str]] = []
+    for index, device in enumerate(devices):
+        if device["max_input_channels"] > 0:
+            rows.append((index, f"[{index}] {device['name']} ({device['max_input_channels']} ch)"))
+    return rows
+
+
+def _default_input_device() -> int | None:
+    import sounddevice
+
+    try:
+        default_in = sounddevice.default.device[0]
+    except Exception:
+        return None
+    return default_in if isinstance(default_in, int) and default_in >= 0 else None
+
+
+def _styled_card(title: str, body: str):
+    from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout
+
+    frame = QFrame()
+    frame.setObjectName("card")
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(16, 16, 16, 16)
+    layout.setSpacing(8)
+
+    heading = QLabel(f"<b>{title}</b>")
+    heading.setWordWrap(True)
+    layout.addWidget(heading)
+
+    text = QLabel(body)
+    text.setWordWrap(True)
+    layout.addWidget(text)
+
+    return frame
+
+
 def install_gui() -> None:
     """Launch the GUI installer wizard."""
     try:
-        from PyQt6.QtCore import Qt, QThread, pyqtSignal
-        from PyQt6.QtGui import QFont
+        from PyQt6.QtCore import Qt
         from PyQt6.QtWidgets import (
             QApplication,
             QCheckBox,
             QComboBox,
+            QFileDialog,
             QFormLayout,
+            QFrame,
             QHBoxLayout,
             QLabel,
             QLineEdit,
@@ -151,6 +201,7 @@ def install_gui() -> None:
             QProgressBar,
             QPushButton,
             QSlider,
+            QSpinBox,
             QTextEdit,
             QVBoxLayout,
             QWizard,
@@ -159,264 +210,355 @@ def install_gui() -> None:
     except ImportError:
         print("PyQt6 is not installed. Running CLI installer instead.")
         from jarvis.daemon.installer import install
+
         install()
         return
 
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setStyleSheet(DARK_STYLESHEET)
 
-    # -- Page 1: Welcome --
     class WelcomePage(QWizardPage):
-        def __init__(self):
+        def __init__(self) -> None:
             super().__init__()
-            self.setTitle("Welcome to Jarvis AI")
-            self.setSubTitle("This wizard will set up Jarvis on your system.")
+            self.setTitle("Welcome")
+            self.setSubTitle("This wizard installs Jarvis and defines its startup profile.")
 
             layout = QVBoxLayout(self)
+            layout.addWidget(
+                _styled_card(
+                    "What this installer does",
+                    "It installs the package, stores your API keys, saves the initial "
+                    "launch profile, and configures auto-start if you want it.",
+                )
+            )
 
             info = QLabel(
                 f"<b>Platform:</b> {platform.system()} ({platform.machine()})<br>"
-                f"<b>Python:</b> {sys.version.split()[0]}<br>"
+                f"<b>Python:</b> {sys.version.split()[0]}"
             )
             info.setTextFormat(Qt.TextFormat.RichText)
             layout.addWidget(info)
 
             py_ok = sys.version_info >= (3, 11)
-            if py_ok:
-                status = QLabel("Python 3.11+ requirement met.")
-                status.setStyleSheet("color: #a6e3a1; font-weight: bold;")
-            else:
-                status = QLabel(
-                    f"Warning: Python 3.11+ recommended (you have {sys.version_info.major}.{sys.version_info.minor})"
-                )
-                status.setStyleSheet("color: #fab387; font-weight: bold;")
+            status = QLabel(
+                "Python 3.11+ requirement met." if py_ok else
+                f"Python 3.11+ is recommended (detected {sys.version_info.major}.{sys.version_info.minor})."
+            )
+            status.setStyleSheet(
+                "color: #22c55e;" if py_ok else "color: #f59e0b;"
+            )
             layout.addWidget(status)
 
-            # Dependency check
-            layout.addWidget(QLabel("\n<b>Checking dependencies...</b>"))
             missing_req, missing_opt = check_dependencies()
+            dep_title = QLabel("<b>Dependency check</b>")
+            layout.addWidget(dep_title)
 
-            if not missing_req:
-                dep_label = QLabel("All required packages installed.")
-                dep_label.setStyleSheet("color: #a6e3a1;")
+            if missing_req:
+                req = QLabel("Missing required packages: " + ", ".join(missing_req))
+                req.setWordWrap(True)
+                req.setStyleSheet("color: #f87171;")
+                layout.addWidget(req)
             else:
-                dep_label = QLabel(
-                    f"Missing required: {', '.join(missing_req)}\n"
-                    f"Run: pip install {' '.join(missing_req)}"
-                )
-                dep_label.setStyleSheet("color: #f38ba8;")
-                dep_label.setWordWrap(True)
-            layout.addWidget(dep_label)
+                ok = QLabel("All required runtime packages are already available.")
+                ok.setStyleSheet("color: #22c55e;")
+                layout.addWidget(ok)
 
             if missing_opt:
-                opt_label = QLabel(f"Optional (not installed): {', '.join(missing_opt)}")
-                opt_label.setStyleSheet("color: #9399b2;")
-                layout.addWidget(opt_label)
+                opt = QLabel("Optional packages not installed: " + ", ".join(missing_opt))
+                opt.setWordWrap(True)
+                opt.setStyleSheet("color: #94a3b8;")
+                layout.addWidget(opt)
 
-            layout.addStretch()
+            detected_apps = {
+                "Chrome": find_chrome_path(),
+                "Obsidian": find_obsidian_path(),
+                "Warp": find_warp_path(),
+            }
+            detection_lines = []
+            for label, path in detected_apps.items():
+                state = "detected" if path else "not found"
+                suffix = f" - {path}" if path else ""
+                detection_lines.append(f"{label}: {state}{suffix}")
+            app_status = QLabel("<b>Windows app detection</b><br>" + "<br>".join(detection_lines))
+            app_status.setTextFormat(Qt.TextFormat.RichText)
+            app_status.setWordWrap(True)
+            layout.addWidget(app_status)
 
-    # -- Page 2: API Keys --
-    class APIKeyPage(QWizardPage):
-        def __init__(self):
+            layout.addStretch(1)
+
+    class SecretsPage(QWizardPage):
+        def __init__(self) -> None:
             super().__init__()
             self.setTitle("API Keys")
-            self.setSubTitle("Enter your API keys. These are stored locally in ~/.jarvis/.env")
+            self.setSubTitle("Store keys locally in your Jarvis home directory.")
 
             layout = QFormLayout(self)
 
             self.gemini_key = QLineEdit()
             self.gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
-            self.gemini_key.setPlaceholderText("Required -- from ai.google.dev")
-            layout.addRow("Gemini API Key:", self.gemini_key)
+            self.gemini_key.setPlaceholderText("Required - Gemini API key")
+            layout.addRow("Gemini key:", self.gemini_key)
 
             self.gemini_status = QLabel("")
-            validate_btn = QPushButton("Validate Key")
+            self.gemini_status.setProperty("role", "muted")
+            validate_btn = QPushButton("Validate")
             validate_btn.clicked.connect(self._validate_gemini)
-            key_row = QHBoxLayout()
-            key_row.addWidget(validate_btn)
-            key_row.addWidget(self.gemini_status)
-            layout.addRow("", key_row)
+            validate_row = QHBoxLayout()
+            validate_row.addWidget(validate_btn)
+            validate_row.addWidget(self.gemini_status, 1)
+            layout.addRow("Check key:", validate_row)
+
+            self.porcupine_key = QLineEdit()
+            self.porcupine_key.setEchoMode(QLineEdit.EchoMode.Password)
+            self.porcupine_key.setPlaceholderText("Optional - enables wake word")
+            layout.addRow("Porcupine key:", self.porcupine_key)
 
             self.elevenlabs_key = QLineEdit()
             self.elevenlabs_key.setEchoMode(QLineEdit.EchoMode.Password)
-            self.elevenlabs_key.setPlaceholderText("Optional -- for premium TTS")
-            layout.addRow("ElevenLabs Key:", self.elevenlabs_key)
+            self.elevenlabs_key.setPlaceholderText("Optional - premium TTS")
+            layout.addRow("ElevenLabs key:", self.elevenlabs_key)
 
-        def _validate_gemini(self):
+        def _validate_gemini(self) -> None:
             key = self.gemini_key.text().strip()
             if not key:
-                self.gemini_status.setText("Enter a key first")
-                self.gemini_status.setStyleSheet("color: #fab387;")
+                self.gemini_status.setText("Enter a key first.")
                 return
+
             self.gemini_status.setText("Validating...")
-            self.gemini_status.setStyleSheet("color: #9399b2;")
             QApplication.processEvents()
 
             if validate_gemini_key(key):
-                self.gemini_status.setText("Valid!")
-                self.gemini_status.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+                self.gemini_status.setText("Valid.")
+                self.gemini_status.setStyleSheet("color: #22c55e;")
             else:
-                self.gemini_status.setText("Invalid key")
-                self.gemini_status.setStyleSheet("color: #f38ba8; font-weight: bold;")
+                self.gemini_status.setText("Invalid.")
+                self.gemini_status.setStyleSheet("color: #f87171;")
 
-    # -- Page 3: Preferences --
-    class PreferencesPage(QWizardPage):
-        def __init__(self):
+    class BehaviorPage(QWizardPage):
+        def __init__(self) -> None:
             super().__init__()
-            self.setTitle("Preferences")
-            self.setSubTitle("Configure Jarvis behavior.")
+            self.setTitle("Startup Experience")
+            self.setSubTitle("Choose how Jarvis wakes up and what it does first.")
 
-            layout = QFormLayout(self)
+            layout = QVBoxLayout(self)
+            layout.addWidget(
+                _styled_card(
+                    "Recommended flow",
+                    "Use double-clap to initialize Jarvis, then the wake word 'Jarvis' "
+                    "for follow-up commands. The installer saves this profile together "
+                    "with your startup defaults.",
+                )
+            )
+
+            form = QFormLayout()
 
             self.tts_engine = QComboBox()
-            tts_opts = ["pyttsx3"]
+            tts_options = ["auto", "pyttsx3"]
             if platform.system() == "Darwin":
-                tts_opts.insert(0, "macos_say")
-            tts_opts.append("elevenlabs")
-            self.tts_engine.addItems(tts_opts)
-            layout.addRow("TTS Engine:", self.tts_engine)
+                tts_options.insert(1, "macos_say")
+            tts_options.append("elevenlabs")
+            self.tts_engine.addItems(tts_options)
+            self.tts_engine.setCurrentText("auto")
+            form.addRow("TTS engine:", self.tts_engine)
 
             self.tts_voice = QLineEdit("Daniel" if platform.system() == "Darwin" else "")
-            layout.addRow("TTS Voice:", self.tts_voice)
+            form.addRow("TTS voice:", self.tts_voice)
 
             self.whisper_model = QComboBox()
             self.whisper_model.addItems(["tiny.en", "base.en", "small.en", "medium.en"])
             self.whisper_model.setCurrentText("base.en")
-            self.ram_label = QLabel("~130 MB RAM")
-            self.whisper_model.currentTextChanged.connect(
-                lambda t: self.ram_label.setText(
-                    {"tiny.en": "~40 MB RAM", "base.en": "~130 MB RAM",
-                     "small.en": "~250 MB RAM", "medium.en": "~500 MB RAM"}.get(t, "")
-                )
-            )
+            self.model_label = QLabel("Balanced default")
+            self.whisper_model.currentTextChanged.connect(self._update_model_hint)
             model_row = QHBoxLayout()
             model_row.addWidget(self.whisper_model)
-            model_row.addWidget(self.ram_label)
-            layout.addRow("STT Model:", model_row)
+            model_row.addWidget(self.model_label)
+            form.addRow("STT model:", model_row)
 
-            self.sensitivity = QSlider(Qt.Orientation.Horizontal)
-            self.sensitivity.setRange(0, 100)
-            self.sensitivity.setValue(70)
-            self.sens_label = QLabel("0.70")
-            self.sensitivity.valueChanged.connect(
-                lambda v: self.sens_label.setText(f"{v / 100:.2f}")
+            self.double_clap = QCheckBox("Double-clap to initialize Jarvis")
+            self.double_clap.setChecked(True)
+            form.addRow(self.double_clap)
+
+            self.wake_word = QCheckBox("Enable wake word 'Jarvis'")
+            self.wake_word.setChecked(True)
+            form.addRow(self.wake_word)
+
+            self.hotkey = QCheckBox("Enable hotkey fallback")
+            self.hotkey.setChecked(True)
+            form.addRow(self.hotkey)
+
+            self.clap_gap = QSpinBox()
+            self.clap_gap.setRange(80, 300)
+            self.clap_gap.setValue(140)
+            form.addRow("Clap gap (ms):", self.clap_gap)
+
+            self.clap_timeout = QSpinBox()
+            self.clap_timeout.setRange(300, 1200)
+            self.clap_timeout.setValue(600)
+            form.addRow("Clap timeout (ms):", self.clap_timeout)
+
+            self.clap_sensitivity = QSlider(Qt.Orientation.Horizontal)
+            self.clap_sensitivity.setRange(10, 100)
+            self.clap_sensitivity.setValue(70)
+            self.sensitivity_label = QLabel("0.70")
+            self.clap_sensitivity.valueChanged.connect(
+                lambda value: self.sensitivity_label.setText(f"{value / 100:.2f}")
             )
-            sens_row = QHBoxLayout()
-            sens_row.addWidget(self.sensitivity)
-            sens_row.addWidget(self.sens_label)
-            layout.addRow("Clap Sensitivity:", sens_row)
+            sensitivity_row = QHBoxLayout()
+            sensitivity_row.addWidget(self.clap_sensitivity)
+            sensitivity_row.addWidget(self.sensitivity_label)
+            form.addRow("Clap sensitivity:", sensitivity_row)
 
-    # -- Page 4: Calibration --
-    class CalibrationPage(QWizardPage):
-        def __init__(self):
+            self.hotkey_text = QLineEdit("ctrl+shift+j")
+            form.addRow("Hotkey:", self.hotkey_text)
+
+            layout.addLayout(form)
+
+        def _update_model_hint(self, value: str) -> None:
+            hints = {
+                "tiny.en": "Fastest, least accurate",
+                "base.en": "Balanced default",
+                "small.en": "Better accuracy",
+                "medium.en": "Best accuracy, heavier",
+            }
+            self.model_label.setText(hints.get(value, ""))
+
+    class MicPage(QWizardPage):
+        def __init__(self) -> None:
             super().__init__()
-            self.setTitle("Clap Calibration")
-            self.setSubTitle("Test double-clap detection.")
+            self.setTitle("Microphone")
+            self.setSubTitle("Pick the microphone behavior that fits your setup.")
 
             layout = QVBoxLayout(self)
-
-            self.status_label = QLabel(
-                "Click 'Calibrate' to measure ambient noise, then test with a double-clap."
+            layout.addWidget(
+                _styled_card(
+                    "Default microphone behavior",
+                    "Leave this on system default if you switch microphones often. Jarvis "
+                    "will follow whatever Windows marks as the active input device on the next launch.",
+                )
             )
-            self.status_label.setWordWrap(True)
-            layout.addWidget(self.status_label)
 
-            self.progress = QProgressBar()
-            self.progress.setRange(0, 100)
-            self.progress.setValue(0)
-            layout.addWidget(self.progress)
+            self.use_default = QCheckBox("Use the current system default microphone")
+            self.use_default.setChecked(True)
+            self.use_default.toggled.connect(self._refresh_enabled_state)
+            layout.addWidget(self.use_default)
 
-            btn_row = QHBoxLayout()
-            self.calibrate_btn = QPushButton("Calibrate (3 seconds)")
-            self.calibrate_btn.clicked.connect(self._run_calibration)
-            btn_row.addWidget(self.calibrate_btn)
-
-            self.test_btn = QPushButton("Test Double-Clap")
-            self.test_btn.setEnabled(False)
-            self.test_btn.clicked.connect(self._test_clap)
-            btn_row.addWidget(self.test_btn)
-            layout.addLayout(btn_row)
-
-            self.result_label = QLabel("")
-            layout.addWidget(self.result_label)
-            layout.addStretch()
-
-            self._calibrated = False
-            self._detector = None
-
-        def _run_calibration(self):
-            self.calibrate_btn.setEnabled(False)
-            self.status_label.setText("Be quiet for 3 seconds...")
-            self.progress.setValue(0)
-            QApplication.processEvents()
-
+            self.device_combo = QComboBox()
+            self._device_map: list[int] = []
             try:
-                from jarvis.activation.clap_detector import ClapDetector
+                for index, label in _device_rows():
+                    self.device_combo.addItem(label)
+                    self._device_map.append(index)
+            except Exception as exc:
+                self.device_combo.addItem(f"Unable to list devices: {exc}")
+                self.device_combo.setEnabled(False)
 
-                self._detector = ClapDetector(on_clap=lambda: None)
-                # Simulate progress (calibrate blocks for 3s)
-                import threading
-                def _cal():
-                    self._detector.calibrate()
-                t = threading.Thread(target=_cal, daemon=True)
-                t.start()
+            layout.addWidget(QLabel("Pinned device:"))
+            layout.addWidget(self.device_combo)
 
-                import time
-                for i in range(30):
-                    time.sleep(0.1)
-                    self.progress.setValue(int((i + 1) / 30 * 100))
-                    QApplication.processEvents()
+            default_index = _default_input_device()
+            if default_index is not None:
+                layout.addWidget(QLabel(f"Default device index detected: {default_index}"))
 
-                t.join(timeout=5)
-                self._calibrated = True
-                self.status_label.setText("Calibration complete! Now test with a double-clap.")
-                self.test_btn.setEnabled(True)
-                self.result_label.setText("")
-            except Exception as e:
-                self.status_label.setText(f"Calibration failed: {e}")
-                self.status_label.setStyleSheet("color: #f38ba8;")
-            finally:
-                self.calibrate_btn.setEnabled(True)
+            self._refresh_enabled_state(self.use_default.isChecked())
 
-        def _test_clap(self):
-            if not self._detector:
-                return
+        def _refresh_enabled_state(self, checked: bool) -> None:
+            self.device_combo.setEnabled(not checked and self.device_combo.count() > 0)
 
-            self.result_label.setText("Listening for double-clap (5 seconds)...")
-            self.result_label.setStyleSheet("color: #9399b2;")
-            QApplication.processEvents()
+        def selected_device(self) -> tuple[int | None, str]:
+            if self.use_default.isChecked() or not self._device_map:
+                return None, ""
+            current = self.device_combo.currentIndex()
+            if current < 0 or current >= len(self._device_map):
+                return None, ""
+            index = self._device_map[current]
+            return index, self.device_combo.currentText()
 
-            detected = False
+    class LaunchPage(QWizardPage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.setTitle("Startup Profile")
+            self.setSubTitle("Set the defaults for Jarvis's first launch sequence.")
 
-            def on_clap():
-                nonlocal detected
-                detected = True
+            layout = QVBoxLayout(self)
+            layout.addWidget(
+                _styled_card(
+                    "What gets persisted",
+                    "Project directory, browser tabs, and the app defaults used for the initial launch sequence are saved to your Jarvis home directory.",
+                )
+            )
 
-            self._detector._on_clap = on_clap
-            self._detector.start()
+            form = QFormLayout()
 
-            import time
-            for _ in range(50):  # 5 seconds
-                time.sleep(0.1)
-                QApplication.processEvents()
-                if detected:
-                    break
+            self.project_dir = QLineEdit(str(Path.cwd()))
+            browse_btn = QPushButton("Browse")
+            browse_btn.clicked.connect(self._browse_project_dir)
+            project_row = QHBoxLayout()
+            project_row.addWidget(self.project_dir, 1)
+            project_row.addWidget(browse_btn)
+            form.addRow("Project directory:", project_row)
 
-            self._detector.stop()
+            self.startup_browser = QLineEdit("chrome")
+            form.addRow("Startup browser:", self.startup_browser)
 
-            if detected:
-                self.result_label.setText("Double-clap detected! Everything works.")
-                self.result_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
-            else:
-                self.result_label.setText("No clap detected. Try adjusting sensitivity or clapping louder.")
-                self.result_label.setStyleSheet("color: #fab387;")
+            self.gmail_url = QLineEdit("https://mail.google.com")
+            self.classroom_url = QLineEdit("https://classroom.google.com")
+            self.docs_url = QLineEdit("https://docs.google.com")
+            self.docs_url.setText("https://docs.google.com/document/u/0/")
+            self.song_url = QLineEdit("https://www.youtube.com/watch?v=fPO76Jlnz6c&autoplay=1")
+            form.addRow("Gmail URL:", self.gmail_url)
+            form.addRow("Classroom URL:", self.classroom_url)
+            form.addRow("Docs URL:", self.docs_url)
+            form.addRow("Song URL:", self.song_url)
 
-    # -- Page 5: Finish --
+            self.app_defaults = QLineEdit("Obsidian, Warp")
+            form.addRow("App defaults:", self.app_defaults)
+
+            self.claude_command = QLineEdit("claude")
+            form.addRow("Claude command:", self.claude_command)
+
+            layout.addLayout(form)
+
+        def _browse_project_dir(self) -> None:
+            selected = QFileDialog.getExistingDirectory(
+                self,
+                "Select project directory",
+                self.project_dir.text().strip() or str(Path.cwd()),
+            )
+            if selected:
+                self.project_dir.setText(selected)
+
+        def launch_profile_payload(self) -> dict[str, object]:
+            browser_defaults = [
+                self.gmail_url.text().strip(),
+                self.classroom_url.text().strip(),
+                self.docs_url.text().strip(),
+                self.song_url.text().strip(),
+            ]
+            browser_defaults = [value for value in browser_defaults if value]
+
+            apps = [
+                item.strip()
+                for item in self.app_defaults.text().split(",")
+                if item.strip()
+            ]
+
+            return {
+                "startup_project_dir": self.project_dir.text().strip(),
+                "startup_browser": self.startup_browser.text().strip() or "chrome",
+                "startup_urls": browser_defaults,
+                "startup_apps": apps,
+                "launch_warp_with_claude": True,
+                "claude_command": self.claude_command.text().strip() or "claude",
+                "startup_enabled": True,
+            }
+
     class FinishPage(QWizardPage):
-        def __init__(self, wizard_ref):
+        def __init__(self, wizard_ref: QWizard) -> None:
             super().__init__()
             self._wizard_ref = wizard_ref
-            self.setTitle("Installation Complete")
-            self.setSubTitle("Jarvis is ready to use!")
+            self._installed = False
+            self.setTitle("Finish")
+            self.setSubTitle("Review the saved settings and install Jarvis.")
 
             layout = QVBoxLayout(self)
 
@@ -424,98 +566,127 @@ def install_gui() -> None:
             self.summary.setReadOnly(True)
             layout.addWidget(self.summary)
 
-            self.auto_start_cb = QCheckBox("Start Jarvis on login")
-            self.auto_start_cb.setChecked(True)
-            layout.addWidget(self.auto_start_cb)
+            self.auto_start = QCheckBox("Install auto-start on login")
+            self.auto_start.setChecked(True)
+            layout.addWidget(self.auto_start)
 
-            self.start_now_cb = QCheckBox("Start Jarvis now")
-            self.start_now_cb.setChecked(True)
-            layout.addWidget(self.start_now_cb)
+            self.start_now = QCheckBox("Launch Jarvis after setup")
+            self.start_now.setChecked(True)
+            layout.addWidget(self.start_now)
 
-        def initializePage(self):
-            """Perform the actual installation when this page is shown."""
+        def initializePage(self) -> None:
+            if self._installed:
+                return
+
             wizard = self._wizard_ref
-            api_page = wizard.page(1)
-            pref_page = wizard.page(2)
+            secrets: SecretsPage = wizard.page(1)  # type: ignore[assignment]
+            behavior: BehaviorPage = wizard.page(2)  # type: ignore[assignment]
+            mic: MicPage = wizard.page(3)  # type: ignore[assignment]
+            launch: LaunchPage = wizard.page(4)  # type: ignore[assignment]
+            launch_payload = launch.launch_profile_payload()
+            device_index, device_name = mic.selected_device()
 
-            # Build config from wizard data
-            config = JarvisConfig(
-                gemini_api_key=api_page.gemini_key.text().strip(),
-                elevenlabs_api_key=api_page.elevenlabs_key.text().strip(),
-                tts_engine=pref_page.tts_engine.currentText(),
-                tts_voice=pref_page.tts_voice.text() or "Daniel",
-                whisper_model_size=pref_page.whisper_model.currentText(),
-                clap_sensitivity=pref_page.sensitivity.value() / 100.0,
-                gemini_model="gemini-2.0-flash",
-            )
+            activation_methods = []
+            if behavior.wake_word.isChecked():
+                activation_methods.append("wake_word")
+            if behavior.hotkey.isChecked():
+                activation_methods.append("hotkey")
+            if not activation_methods:
+                activation_methods = ["wake_word", "hotkey"]
 
-            # Run installation
-            config.ensure_dirs()
-            config.save()
-            config.save_env()
+            overrides: dict[str, object] = {
+                "gemini_api_key": secrets.gemini_key.text().strip(),
+                "porcupine_access_key": secrets.porcupine_key.text().strip(),
+                "elevenlabs_api_key": secrets.elevenlabs_key.text().strip(),
+                "tts_engine": behavior.tts_engine.currentText().strip(),
+                "tts_voice": behavior.tts_voice.text().strip() or "Daniel",
+                "whisper_model_size": behavior.whisper_model.currentText().strip(),
+                "clap_sensitivity": behavior.clap_sensitivity.value() / 100.0,
+                "clap_min_gap_ms": behavior.clap_gap.value(),
+                "clap_timeout_ms": behavior.clap_timeout.value(),
+                "activation_methods": activation_methods,
+                "require_initialization_clap": behavior.double_clap.isChecked(),
+                "hotkey": behavior.hotkey_text.text().strip() or "ctrl+shift+j",
+                "audio_input_device": device_index,
+                "audio_input_device_follow_default": mic.use_default.isChecked(),
+                "auto_detect_microphone": mic.use_default.isChecked(),
+                "preferred_microphone_name": device_name,
+            }
+            overrides.update(launch_payload)
 
             summary_lines = [
-                f"Config saved to: ~/.jarvis/config.yaml",
-                f"API keys saved to: ~/.jarvis/.env",
-                f"TTS engine: {config.tts_engine}",
-                f"STT model: {config.whisper_model_size}",
-                f"Clap sensitivity: {config.clap_sensitivity:.2f}",
+                "Installer will write:",
+                "- ~/.jarvis/config.yaml",
+                "- ~/.jarvis/.env",
                 "",
+                f"Initialization clap: {'enabled' if behavior.double_clap.isChecked() else 'disabled'}",
+                f"Wake word / hotkey: {', '.join(activation_methods)}",
+                f"Project directory: {launch_payload['startup_project_dir']}",
+                f"Startup browser: {launch_payload['startup_browser']}",
+                f"Browser URLs: {', '.join(launch_payload['startup_urls'])}",
+                f"Startup apps: {', '.join(launch_payload['startup_apps'])}",
+                f"Mic mode: {'system default' if mic.use_default.isChecked() else device_name or 'pinned device'}",
+                f"Auto-start: {'enabled' if self.auto_start.isChecked() else 'disabled'}",
             ]
 
-            if self.auto_start_cb.isChecked():
-                try:
-                    from jarvis.daemon.installer import install
-                    install()
-                    summary_lines.append("Auto-start installed.")
-                except Exception as e:
-                    summary_lines.append(f"Auto-start failed: {e}")
-            else:
-                summary_lines.append("Auto-start skipped.")
+            if not secrets.gemini_key.text().strip():
+                summary_lines.append("")
+                summary_lines.append("Warning: the Gemini key is empty. Jarvis will not be usable until a key is added.")
 
-            summary_lines.append("\nRun 'jarvis start' to begin.")
-            self.summary.setPlainText("\n".join(summary_lines))
+            from jarvis.daemon.installer import install
 
-            # Store config for post-finish actions
-            self._config = config
+            try:
+                install(
+                    config_overrides=overrides,
+                    enable_autostart=self.auto_start.isChecked(),
+                )
+                self.summary.setPlainText("\n".join(summary_lines))
+                self._installed = True
+                self._install_payload = overrides
+            except Exception as exc:
+                self.summary.setPlainText("\n".join(summary_lines + ["", f"Installation failed: {exc}"]))
+                self._installed = False
+                self.auto_start.setEnabled(False)
+                self.start_now.setEnabled(False)
+                logger.exception("Installer wizard failed")
 
-    # -- Build the wizard --
     wizard = QWizard()
-    wizard.setWindowTitle("Jarvis AI -- Setup Wizard")
-    wizard.setMinimumSize(600, 450)
-    wizard.setStyleSheet(DARK_STYLESHEET)
-
+    wizard.setWindowTitle("Jarvis AI Setup")
+    wizard.setMinimumSize(760, 560)
     wizard.addPage(WelcomePage())
-    wizard.addPage(APIKeyPage())
-    wizard.addPage(PreferencesPage())
-    wizard.addPage(CalibrationPage())
+    wizard.addPage(SecretsPage())
+    wizard.addPage(BehaviorPage())
+    wizard.addPage(MicPage())
+    wizard.addPage(LaunchPage())
     finish_page = FinishPage(wizard)
     wizard.addPage(finish_page)
 
     result = wizard.exec()
+    if result != QWizard.DialogCode.Accepted:
+        return
 
-    if result == QWizard.DialogCode.Accepted:
-        # Start Jarvis if requested
-        if finish_page.start_now_cb.isChecked():
-            service_path = str(Path(__file__).parent.parent / "daemon" / "service.py")
-            if sys.platform == "win32":
-                python = sys.executable
-                pythonw = python.replace("python.exe", "pythonw.exe")
-                if Path(pythonw).exists():
-                    python = pythonw
-                subprocess.Popen(
-                    [python, service_path, "--headless"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-            else:
-                subprocess.Popen(
-                    [sys.executable, service_path],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-            print("Jarvis started!")
+    if finish_page.start_now.isChecked():
+        python = sys.executable
+        if sys.platform == "win32":
+            pythonw = python.replace("python.exe", "pythonw.exe")
+            if Path(pythonw).exists():
+                python = pythonw
+            subprocess.Popen(
+                [python, "-m", "jarvis", "start", "--headless"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        else:
+            subprocess.Popen(
+                [python, "-m", "jarvis", "start", "--headless"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
 
-    # Don't call app.exec() if we created the app -- wizard.exec() was modal
+        QMessageBox.information(
+            wizard,
+            "Jarvis started",
+            "Jarvis was launched in the background.",
+        )

@@ -347,6 +347,29 @@ async def focus_status(
     )
 
 
+async def focus_mode(
+    action: str,
+    goal: str = "",
+    strictness: str = "medium",
+    *,
+    _platform: Platform,
+    _config: JarvisConfig,
+) -> ToolResult:
+    """Compatibility wrapper that routes a single focus tool to the concrete handlers."""
+    normalized = (action or "").strip().lower()
+    if normalized == "start":
+        return await focus_start(goal=goal, strictness=strictness, _platform=_platform, _config=_config)
+    if normalized == "stop":
+        return await focus_stop(_platform=_platform, _config=_config)
+    if normalized == "status":
+        return await focus_status(_platform=_platform, _config=_config)
+    return ToolResult(
+        success=False,
+        error=f"Unknown focus action: {action}",
+        display_text=f"Unsupported focus action '{action}'.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -358,3 +381,4 @@ def register(executor: Any, platform: Platform, config: JarvisConfig) -> None:
     executor.register("focus_start", partial(focus_start, _platform=platform, _config=config))
     executor.register("focus_stop", partial(focus_stop, _platform=platform, _config=config))
     executor.register("focus_status", partial(focus_status, _platform=platform, _config=config))
+    executor.register("focus_mode", partial(focus_mode, _platform=platform, _config=config))
